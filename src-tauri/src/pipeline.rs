@@ -1,16 +1,17 @@
-//! The dictation state machine: hotkey events in, recording -> transcribe -> paste -> save out.
-//! Runs on one thread so a dictation can never be processed twice.
+//! Dictation in two threads:
+//! - the state machine turns hotkey events into recordings and never blocks, so a new fn press always records;
+//! - the worker transcribes, cleans up, pastes and saves finished recordings one at a time, in order.
 
 use crate::audio::{self, Recording};
 use crate::db::{self, NewTranscript};
-use crate::{cleanup, llm, store};
 use crate::hotkey::HotkeyEvent;
 use crate::paste::{self, PasteResult};
 use crate::stt::Stt;
+use crate::{cleanup, llm, store};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -46,6 +47,13 @@ struct Active {
     warned: bool,
 }
 
+/// A finished recording waiting for the worker.
+struct Job {
+    samples: Vec<f32>,
+    duration_ms: i64,
+    front: paste::FrontApp,
+}
+
 pub struct Pipeline {
     pub app: AppHandle,
     pub db: Arc<Mutex<Connection>>,
@@ -57,7 +65,27 @@ fn emit(app: &AppHandle, state: &'static str, message: Option<String>) {
 }
 
 impl Pipeline {
-    pub fn run(mut self, rx: Receiver<Input>) {
+    pub fn run(self, rx: Receiver<Input>) {
+        let (jobs, job_rx) = mpsc::channel::<Job>();
+        let ready = self.stt.is_some();
+        let worker = Worker { app: self.app.clone(), db: self.db.clone(), stt: self.stt };
+        if std::thread::Builder::new().name("dictation-worker".into()).spawn(move || worker.run(job_rx)).is_err() {
+            emit(&self.app, "error", Some("Could not start the dictation worker".into()));
+            return;
+        }
+        Machine { app: self.app, db: self.db, jobs, ready }.run(rx);
+    }
+}
+
+struct Machine {
+    app: AppHandle,
+    db: Arc<Mutex<Connection>>,
+    jobs: Sender<Job>,
+    ready: bool,
+}
+
+impl Machine {
+    fn run(self, rx: Receiver<Input>) {
         let mut active: Option<Active> = None;
         loop {
             let input = match rx.recv_timeout(Duration::from_millis(250)) {
@@ -71,7 +99,7 @@ impl Pipeline {
                 let el = a.started.elapsed();
                 if el >= STOP_AT {
                     let a = active.take().unwrap();
-                    active = self.finish(a, &rx);
+                    self.finish(a);
                     continue;
                 } else if el >= WARN_AT && !a.warned {
                     a.warned = true;
@@ -80,6 +108,8 @@ impl Pipeline {
             }
 
             let Some(input) = input else { continue };
+            #[cfg(debug_assertions)]
+            eprintln!("[input] {input:?} recording={}", active.is_some());
             active = match (active, input) {
                 (None, Input::Key(HotkeyEvent::FnDown)) => self.start(Mode::Hold),
                 (None, Input::Toggle) => self.start(Mode::Locked),
@@ -104,19 +134,21 @@ impl Pipeline {
                     if a.started.elapsed() < MIN_HOLD {
                         let _ = a.rec.stop();
                         emit(&self.app, "idle", None);
-                        None
                     } else {
-                        self.finish(a, &rx)
+                        self.finish(a);
                     }
+                    None
                 }
                 (Some(a), Input::Key(HotkeyEvent::FnCombo)) if a.mode == Mode::Hold => {
                     let _ = a.rec.stop(); // Fn+other key is a shortcut, not dictation
                     emit(&self.app, "idle", None);
                     None
                 }
-                // Its FnUp arrives while processing and is drained in finish().
-                (Some(a), Input::Key(HotkeyEvent::FnDown)) if a.mode == Mode::Locked => self.finish(a, &rx),
-                (Some(a), Input::Toggle) if a.mode == Mode::Locked => self.finish(a, &rx),
+                // The FnUp that follows arrives with no recording active and is ignored.
+                (Some(a), Input::Key(HotkeyEvent::FnDown) | Input::Toggle) if a.mode == Mode::Locked => {
+                    self.finish(a);
+                    None
+                }
                 (Some(a), Input::Key(HotkeyEvent::Escape) | Input::Cancel) => {
                     let _ = a.rec.stop();
                     // TODO: offer Undo to transcribe the cancelled audio after all.
@@ -141,7 +173,7 @@ impl Pipeline {
     }
 
     fn start(&self, mode: Mode) -> Option<Active> {
-        if self.stt.is_none() {
+        if !self.ready {
             emit(&self.app, "error", Some("Speech model not loaded".into()));
             return None;
         }
@@ -172,15 +204,48 @@ impl Pipeline {
         }
     }
 
-    /// Stops, transcribes, pastes and saves. Returns a new recording if Fn is being held when it is done.
-    fn finish(&mut self, a: Active, rx: &Receiver<Input>) -> Option<Active> {
+    /// Stops the recording and hands it to the worker. Returns at once, so the next press records right away.
+    fn finish(&self, a: Active) {
         let front = paste::frontmost_app(); // capture before anything can change focus
         emit(&self.app, "processing", None);
         let (samples, duration_ms) = a.rec.stop();
+        if self.jobs.send(Job { samples, duration_ms, front }).is_err() {
+            emit(&self.app, "error", Some("Dictation worker stopped".into()));
+        }
+    }
+}
 
+struct Worker {
+    app: AppHandle,
+    db: Arc<Mutex<Connection>>,
+    stt: Option<Stt>,
+}
+
+impl Worker {
+    fn run(mut self, jobs: Receiver<Job>) {
+        for job in jobs {
+            self.handle(job);
+        }
+    }
+
+    fn handle(&mut self, job: Job) {
+        let Job { samples, duration_ms, front } = job;
+        if !audio::has_speech(&samples) {
+            emit(&self.app, "error", Some("No speech heard".into()));
+            return;
+        }
         match self.process(&samples, front.bundle_id.as_deref()) {
             Ok(out) if out.final_text.is_empty() => emit(&self.app, "error", Some("No speech heard".into())),
             Ok(out) => {
+                // Only refuse when macOS clearly reports a focused element that cannot take text (e.g. Finder).
+                let accepts = paste::focused_accepts_text(front.pid);
+                #[cfg(debug_assertions)]
+                eprintln!("[focus] {:?} pid={:?} accepts_text={accepts:?}", front.name, front.pid);
+                if accepts == Some(false) {
+                    self.save(&out, duration_ms, &front, "paste_failed", Some("no_text_field"));
+                    emit(&self.app, "error", Some("No text field selected. Click one, then press ⌃⌘V".into()));
+                    return;
+                }
                 let tp = Instant::now();
                 let pasted = paste::paste_text(&out.final_text);
                 #[cfg(debug_assertions)]
@@ -203,18 +268,6 @@ impl Pipeline {
             }
             Err(e) => emit(&self.app, "error", Some(format!("Transcription failed: {e}"))),
         }
-
-        // Keys pressed while we were busy: drop them, but if Fn is held right now, start a new recording.
-        let mut fn_down = false;
-        while let Ok(i) = rx.try_recv() {
-            match i {
-                Input::Key(HotkeyEvent::FnDown) => fn_down = true,
-                Input::Key(HotkeyEvent::FnUp) => fn_down = false,
-                _ => {}
-            }
-        }
-        // A held key does not resend FnDown, so start now instead of dropping the press.
-        if fn_down { self.start(Mode::Hold) } else { None }
     }
 
     /// Whisper -> snippets -> dictionary fixes -> local rules -> optional LLM -> snippet text.
@@ -269,12 +322,12 @@ impl Pipeline {
     fn save(&self, out: &Processed, duration_ms: i64, front: &paste::FrontApp, status: &str, err: Option<&str>) {
         let day = chrono::Local::now().format("%Y-%m-%d").to_string();
         let conn = self.db.lock().unwrap();
+        let _ = db::set_last_text(&out.final_text);
         if out.storage_mode == "never" {
             // History off: count the stats, keep no text.
             if let Err(e) = store::record_usage(&conn, &day, db::word_count(&out.final_text), duration_ms, out.fixes) {
                 eprintln!("usage update failed: {e}");
             }
-            let _ = db::set_last_text(&out.final_text);
             return;
         }
         let row = db::insert_transcript(
@@ -295,7 +348,6 @@ impl Pipeline {
         );
         match row {
             Ok(t) => {
-                let _ = db::set_last_text(&t.final_text);
                 let _ = self.app.emit("transcript://created", t);
             }
             Err(e) => eprintln!("save transcript failed: {e}"),

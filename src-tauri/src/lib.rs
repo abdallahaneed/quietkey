@@ -314,7 +314,7 @@ pub fn run() {
             let setup_done = store::settings_get(&app.state::<AppState>().db.lock().unwrap())
                 .map(|s| s["onboarding_done"] == true)
                 .unwrap_or(false);
-            if !setup_done && std::env::var("FLOW_TEST_WAV").is_err() {
+            if !setup_done && std::env::var("UTTER_TEST_WAV").is_err() {
                 show_hub(app.handle());
             }
             Ok(())

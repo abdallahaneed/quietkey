@@ -24,6 +24,9 @@ pub enum HotkeyEvent {
     CopyLast,
 }
 
+/// Marks key events this app posts itself (the paste keystroke), so the listener can skip them.
+pub const SYNTHETIC_TAG: i64 = 0x5574_7465; // "Utte"
+
 const KC_FN: i64 = 63; // kVK_Function
 const KC_SPACE: i64 = 49;
 const KC_ESC: i64 = 53;
@@ -104,8 +107,15 @@ pub fn spawn(on_event: impl Fn(HotkeyEvent) + Send + 'static) -> anyhow::Result<
                     }
                     return CallbackResult::Keep;
                 }
+                if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == SYNTHETIC_TAG {
+                    return CallbackResult::Keep; // our own paste keystroke, not the user
+                }
                 let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
                 if let Some(ev) = classify(etype, keycode, event.get_flags(), &fn_held) {
+                    #[cfg(debug_assertions)]
+                    if ev == HotkeyEvent::FnCombo {
+                        eprintln!("[hotkey] fn combo from keycode {keycode} type {etype:?}");
+                    }
                     on_event(ev);
                 }
                 CallbackResult::Keep

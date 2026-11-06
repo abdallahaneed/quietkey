@@ -6,9 +6,15 @@ use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPa
 use objc2_foundation::{NSArray, NSData, NSString};
 use std::time::Duration;
 
+type CFTypeRef = *const std::ffi::c_void;
+
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
     fn AXIsProcessTrusted() -> bool;
+    fn AXUIElementCreateApplication(pid: i32) -> CFTypeRef;
+    fn AXUIElementCopyAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: *mut CFTypeRef) -> i32;
+    fn AXUIElementIsAttributeSettable(element: CFTypeRef, attribute: CFTypeRef, settable: *mut u8) -> i32;
+    fn AXUIElementCopyAttributeNames(element: CFTypeRef, names: *mut CFTypeRef) -> i32;
 }
 
 /// Accessibility permission: needed to post the synthetic Cmd+V.
@@ -19,6 +25,7 @@ pub fn accessibility_trusted() -> bool {
 pub struct FrontApp {
     pub bundle_id: Option<String>,
     pub name: Option<String>,
+    pub pid: Option<i32>,
 }
 
 pub fn frontmost_app() -> FrontApp {
@@ -27,8 +34,59 @@ pub fn frontmost_app() -> FrontApp {
         Some(app) => FrontApp {
             bundle_id: app.bundleIdentifier().map(|s| s.to_string()),
             name: app.localizedName().map(|s| s.to_string()),
+            pid: Some(app.processIdentifier()),
         },
-        None => FrontApp { bundle_id: None, name: None },
+        None => FrontApp { bundle_id: None, name: None, pid: None },
+    }
+}
+
+/// Does the app's focused element take text? Some(false) only when macOS clearly reports a non-text element
+/// (Finder's file list, a plain window). None when it cannot tell: Chrome and some Electron apps hide their
+/// accessibility tree until an assistive app asks, so unknown must never block a paste.
+pub fn focused_accepts_text(pid: Option<i32>) -> Option<bool> {
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::string::CFString;
+    let pid = pid?;
+    let attr = |name: &'static str| CFString::from_static_string(name);
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let app = CFType::wrap_under_create_rule(app);
+        let mut focused: CFTypeRef = std::ptr::null();
+        let name = attr("AXFocusedUIElement");
+        if AXUIElementCopyAttributeValue(app.as_CFTypeRef(), name.as_CFTypeRef(), &mut focused) != 0 || focused.is_null() {
+            return None;
+        }
+        let focused = CFType::wrap_under_create_rule(focused);
+        let el = focused.as_CFTypeRef();
+
+        let mut role: CFTypeRef = std::ptr::null();
+        let role_attr = attr("AXRole");
+        if AXUIElementCopyAttributeValue(el, role_attr.as_CFTypeRef(), &mut role) == 0 && !role.is_null() {
+            let role = CFType::wrap_under_create_rule(role);
+            if let Some(r) = role.downcast::<CFString>() {
+                if matches!(r.to_string().as_str(), "AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField" | "AXWebArea") {
+                    return Some(true);
+                }
+            }
+        }
+        // Anything that edits text lists a selection range. Only trust the attribute list: Finder answers a
+        // direct AXSelectedTextRange query with an empty range although its file list takes no text.
+        let mut names: CFTypeRef = std::ptr::null();
+        if AXUIElementCopyAttributeNames(el, &mut names) == 0 && !names.is_null() {
+            let names = core_foundation::array::CFArray::<CFString>::wrap_under_create_rule(names as _);
+            if names.iter().any(|n| n.to_string() == "AXSelectedTextRange") {
+                return Some(true);
+            }
+        }
+        let mut settable: u8 = 0;
+        let value_attr = attr("AXValue");
+        if AXUIElementIsAttributeSettable(el, value_attr.as_CFTypeRef(), &mut settable) == 0 && settable != 0 {
+            return Some(true);
+        }
+        Some(false)
     }
 }
 
@@ -85,6 +143,8 @@ fn post_cmd_v() -> Result<(), &'static str> {
     for down in [true, false] {
         let ev = CGEvent::new_keyboard_event(src.clone(), KEY_V, down).map_err(|_| "key event")?;
         ev.set_flags(CGEventFlags::CGEventFlagCommand);
+        // Tag our own keystroke so the fn listener does not mistake it for the user typing fn+V.
+        ev.set_integer_value_field(core_graphics::event::EventField::EVENT_SOURCE_USER_DATA, crate::hotkey::SYNTHETIC_TAG);
         ev.post(CGEventTapLocation::HID);
     }
     Ok(())
