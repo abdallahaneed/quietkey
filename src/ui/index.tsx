@@ -297,7 +297,7 @@ export function PermissionRow({ title, body, granted, onAllow }: { title: string
 
 export function SkeletonRows({ n = 3 }: { n?: number }) {
   return (
-    <div className="flex flex-col gap-3" aria-busy="true" aria-label="Loading">
+    <div className="flex flex-col gap-3" role="status" aria-busy="true" aria-label="Loading">
       {Array.from({ length: n }, (_, i) => (
         <div key={i} className="h-11 animate-pulse rounded-md bg-surface-2" />
       ))}
