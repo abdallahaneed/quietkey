@@ -120,6 +120,17 @@ fn push_mono(data: impl Iterator<Item = f32>, channels: usize, buf: &Mutex<Vec<f
     buf.lock().unwrap().extend_from_slice(&mono);
 }
 
+/// True if any 20 ms window of the 16 kHz clip is louder than faint room noise. Whisper invents text for
+/// silence ("I'm a fan of the world's"), so silent clips must never reach it.
+/// TODO: a real VAD (whisper.cpp ships Silero) would also catch steady background noise.
+pub fn has_speech(samples: &[f32]) -> bool {
+    const WINDOW: usize = 320; // 20 ms at 16 kHz
+    const THRESHOLD: f32 = 0.006; // about -44 dBFS; quiet speech into a laptop mic is well above this
+    samples
+        .chunks(WINDOW)
+        .any(|w| (w.iter().map(|s| s * s).sum::<f32>() / w.len() as f32).sqrt() > THRESHOLD)
+}
+
 /// Box-filter resampler: each output sample averages the input span it covers (acts as a crude low-pass
 /// when downsampling, linear hold when upsampling).
 /// TODO: no proper anti-alias filter; fine for speech into Whisper, swap for a sinc resampler if accuracy suffers.
@@ -153,5 +164,29 @@ mod tests {
         assert!(resample(&[], 48_000, 16_000).is_empty());
         // averaging: [0,3,6] -> 3
         assert_eq!(resample(&[0.0, 3.0, 6.0], 48_000, 16_000), vec![3.0]);
+    }
+}
+
+#[cfg(test)]
+mod speech_gate_tests {
+    use super::has_speech;
+
+    #[test]
+    fn silence_and_room_noise_are_not_speech() {
+        assert!(!has_speech(&vec![0.0; 32_000]));
+        // faint room noise, ~-60 dBFS
+        let noise: Vec<f32> = (0..32_000).map(|i| ((i * 7919 % 101) as f32 / 101.0 - 0.5) * 0.002).collect();
+        assert!(!has_speech(&noise));
+        assert!(!has_speech(&[]));
+    }
+
+    #[test]
+    fn quiet_speech_counts() {
+        // 300 ms of a 200 Hz tone at amplitude 0.03 (quiet talking) inside 2 s of silence
+        let mut a = vec![0.0f32; 32_000];
+        for i in 8_000..12_800 {
+            a[i] = (i as f32 * 2.0 * std::f32::consts::PI * 200.0 / 16_000.0).sin() * 0.03;
+        }
+        assert!(has_speech(&a));
     }
 }
