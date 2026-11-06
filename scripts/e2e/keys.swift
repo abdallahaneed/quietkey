@@ -1,4 +1,5 @@
-// Usage: keys fn-down | fn-up | space | esc | ctrlcmd-v | sleep:<s> ...   (posted like real HID input)
+// Usage: keys fn-down | fn-up | space | left | esc | ctrlcmd-v | ctrlcmd-c | cmd-a | cmd-c | click | sleep:<s> ...
+// Events are posted like real HID input.
 import CoreGraphics
 import Foundation
 let src = CGEventSource(stateID: .hidSystemState)
@@ -8,6 +9,13 @@ func key(_ code: CGKeyCode, _ flags: CGEventFlags) {
         let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)!
         e.flags = flags
         e.post(tap: .cghidEventTap)
+    }
+}
+func click() { // left click in the middle of the main screen
+    let b = CGDisplayBounds(CGMainDisplayID())
+    let p = CGPoint(x: b.midX, y: b.midY)
+    for t in [CGEventType.leftMouseDown, .leftMouseUp] {
+        CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)!.post(tap: .cghidEventTap)
     }
 }
 func fn(_ down: Bool) {
@@ -23,7 +31,12 @@ for a in CommandLine.arguments.dropFirst() {
     case "fn-up": fn(false)
     case "space": key(49, fnHeld ? .maskSecondaryFn : [])
     case "esc": key(53, [])
+    case "left": key(123, fnHeld ? .maskSecondaryFn : [])
     case "ctrlcmd-v": key(9, [.maskControl, .maskCommand])
+    case "ctrlcmd-c": key(8, [.maskControl, .maskCommand])
+    case "cmd-a": key(0, .maskCommand)
+    case "cmd-c": key(8, .maskCommand)
+    case "click": click()
     default:
         if a.hasPrefix("sleep:"), let s = Double(a.dropFirst(6)) { Thread.sleep(forTimeInterval: s) }
     }

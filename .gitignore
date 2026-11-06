@@ -25,3 +25,10 @@ dist-ssr
 
 scripts/e2e/keys
 scripts/e2e/speech.wav
+scripts/e2e/fixtures/
+scripts/e2e/results.txt
+scripts/e2e/UtterTestTarget
+test-results/
+playwright-report/
+test-results/
+playwright-report/

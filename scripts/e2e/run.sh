@@ -11,19 +11,20 @@ DB="$HOME/Library/Application Support/dev.abdallah.utter/app.db"
 
 sqlite3 "$DB" "insert or ignore into snippets (id, trigger, expansion, created_at, updated_at) values ('e2e-snip','my email','test@example.com',1,1)"
 printf 'ORIGINAL-CLIP' | pbcopy
-# Remember which document we made; other open TextEdit windows are left alone.
-docname=$(osascript -e 'tell application "TextEdit" to activate' -e 'tell application "TextEdit" to get name of (make new document)')
-[[ -n "$docname" ]] || { echo "could not create a TextEdit document"; exit 2; }
+[[ -x UtterTestTarget ]] || swiftc -O target.swift -o UtterTestTarget
+OUT=$(mktemp -t utter-target)
+./UtterTestTarget "$OUT" & sleep 1.5
+trap 'pkill -x UtterTestTarget 2>/dev/null; rm -f "$OUT"' EXIT
 sleep 1.5
 before=$(sqlite3 "$DB" "select count(*) from transcripts")
 ./keys fn-down sleep:1.5 fn-up sleep:4
-doc=$(osascript -e "tell application \"TextEdit\" to get text of document \"$docname\"")
+doc=$(cat "$OUT")
 after=$(sqlite3 "$DB" "select count(*) from transcripts")
 sqlite3 "$DB" "delete from snippets where id='e2e-snip'"
 
 fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
-check "text inserted into TextEdit"           '[[ "$doc" == *"meeting"* ]]'
+check "text inserted into the test window"           '[[ "$doc" == *"meeting"* ]]'
 check "filler and repeat removed"             '[[ "$doc" != *"Um"* && "$doc" != *"the the"* ]]'
 check "backtrack: 5 actually 6 -> 6"          '[[ "$doc" == *"at 6"* && "$doc" != *"5"* ]]'
 check "snippet expanded"                      '[[ "$doc" == *"test@example.com"* ]]'
