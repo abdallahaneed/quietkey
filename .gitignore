@@ -36,3 +36,4 @@ scripts/e2e/barcheck
 src-tauri/icons/android/
 src-tauri/icons/ios/
 assets/screens/
+dist/

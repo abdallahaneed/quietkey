@@ -99,6 +99,8 @@ npm install
 npm run tauri dev
 ```
 
+Release: `scripts/release.sh` builds the signed universal `dist/Quietkey.dmg` (needs the Quietkey Signing certificate in your keychain; permissions then stay granted across updates).
+
 Tests: `cd src-tauri && cargo test --lib`, `npx playwright test`, and `scripts/e2e/suite.sh` drives the real app end to end.
 
 How it fits together: `hotkey.rs` listens for the key with a Core Graphics event tap, `audio.rs` records with cpal, `stt.rs` runs whisper.cpp (Metal), `llm.rs` talks to Groq or Ollama, `cleanup.rs` holds the offline rules, `paste.rs` pastes and restores the clipboard, `pipeline.rs` ties one dictation together.

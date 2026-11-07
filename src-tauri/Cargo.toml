@@ -1,6 +1,6 @@
 [package]
 name = "quietkey"
-version = "0.1.1"
+version = "0.1.2"
 description = "Local-first voice dictation for macOS"
 authors = ["Abdallah Aneed"]
 edition = "2024"
