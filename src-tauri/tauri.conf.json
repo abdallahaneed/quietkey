@@ -41,7 +41,8 @@
         "resizable": false,
         "shadow": false,
         "visible": false,
-        "visibleOnAllWorkspaces": true
+        "visibleOnAllWorkspaces": true,
+        "acceptFirstMouse": true
       }
     ],
     "security": {

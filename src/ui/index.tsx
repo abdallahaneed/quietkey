@@ -262,7 +262,11 @@ export function Menu({ trigger, items }: { trigger: ReactNode; items: { label: s
 
 /* Small pieces --------------------------------------------------------------- */
 
-const KEY_GLYPH: Record<string, string> = { Ctrl: "⌃", Opt: "⌥", Cmd: "⌘", Shift: "⇧", Fn: "fn", Space: "space", Escape: "esc" };
+const KEY_GLYPH: Record<string, string> = {
+  Ctrl: "⌃", Opt: "⌥", Cmd: "⌘", Shift: "⇧", Fn: "fn", Space: "space", Escape: "esc",
+  LeftCtrl: "left ⌃", RightCtrl: "right ⌃", LeftOpt: "left ⌥", RightOpt: "right ⌥",
+  LeftCmd: "left ⌘", RightCmd: "right ⌘", LeftShift: "left ⇧", RightShift: "right ⇧",
+};
 
 export function KeyCaps({ keys }: { keys: string[] }) {
   return (

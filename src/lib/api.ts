@@ -44,7 +44,19 @@ export type DictEntry = { id: string; word: string; misspelling: string | null; 
 export type Snippet = { id: string; trigger: string; expansion: string; updated_at: number };
 export type DeleteCategory = "history" | "dictionary" | "snippets" | "personalization" | "usage" | "everything";
 
-export type Permissions = { accessibility: boolean; input_monitoring: boolean; hotkey_running: boolean; fn_key_conflict: boolean };
+export type Permissions = {
+  accessibility: boolean; input_monitoring: boolean; hotkey_running: boolean; fn_key_conflict: boolean;
+  microphone: "granted" | "denied" | "undetermined" | "unknown";
+};
+
+/** The keys of the hold-to-dictate shortcut, e.g. ["Fn"] or ["RightCtrl", "RightOpt"]. */
+export const pushToTalk = (s: Settings | null): string[] => s?.shortcuts?.push_to_talk?.[0] ?? ["Fn"];
+const KEY_WORD: Record<string, string> = {
+  Fn: "fn", LeftCtrl: "left ⌃", RightCtrl: "right ⌃", LeftOpt: "left ⌥", RightOpt: "right ⌥",
+  LeftCmd: "left ⌘", RightCmd: "right ⌘", LeftShift: "left ⇧", RightShift: "right ⇧",
+};
+/** "fn" or "right ⌃ + right ⌥", for sentences like "Hold fn to talk". */
+export const shortcutText = (keys: string[]) => keys.map((k) => KEY_WORD[k] ?? k).join(" + ");
 
 export const api = {
   transcriptsList: (before?: number, limit = 50) => invoke<Transcript[]>("transcripts_list", { before, limit }),
@@ -52,6 +64,10 @@ export const api = {
   copyLast: () => invoke<boolean>("copy_last"),
   dictationCancel: () => invoke<void>("dictation_cancel"),
   dictationToggle: () => invoke<void>("dictation_toggle"),
+  dictationUndo: () => invoke<void>("dictation_undo"),
+  hotkeyPause: (on: boolean) => invoke<void>("hotkey_pause", { on }),
+  micTestStart: () => invoke<void>("mic_test_start"),
+  micTestStop: () => invoke<void>("mic_test_stop"),
   permissions: () => invoke<Permissions>("permissions_status"),
   requestInputMonitoring: () => invoke<boolean>("request_input_monitoring"),
   hotkeyStart: () => invoke<void>("hotkey_start"),
@@ -88,6 +104,8 @@ export const events = {
   onState: (cb: (s: { state: DictationState; message: string | null }) => void): Promise<UnlistenFn> =>
     listen<{ state: DictationState; message: string | null }>("dictation://state", (e) => cb(e.payload)),
   onLevel: (cb: (rms: number) => void): Promise<UnlistenFn> => listen<number>("dictation://level", (e) => cb(e.payload)),
+  onMicTestLevel: (cb: (rms: number) => void): Promise<UnlistenFn> => listen<number>("mic_test://level", (e) => cb(e.payload)),
+  onSettings: (cb: (s: Settings) => void): Promise<UnlistenFn> => listen<Settings>("settings://changed", (e) => cb(e.payload)),
   onTranscript: (cb: (t: Transcript) => void): Promise<UnlistenFn> =>
     listen<Transcript>("transcript://created", (e) => cb(e.payload)),
 };

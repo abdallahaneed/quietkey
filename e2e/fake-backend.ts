@@ -4,7 +4,7 @@ import type { Page } from "@playwright/test";
 
 export type FakeState = {
   transcripts?: unknown[];
-  permissions?: { accessibility: boolean; input_monitoring: boolean; hotkey_running: boolean; fn_key_conflict: boolean };
+  permissions?: { accessibility: boolean; input_monitoring: boolean; hotkey_running: boolean; fn_key_conflict: boolean; microphone?: string };
   failList?: boolean;
   dictionary?: { id: string; word: string; misspelling: string | null; source: string; created_at: number }[];
   snippets?: { id: string; trigger: string; expansion: string; updated_at: number }[];
@@ -19,7 +19,7 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
     const listeners = new Map<string, number[]>();
     let nextId = 1;
     const calls: { cmd: string; args: unknown }[] = [];
-    const permissions = s.permissions ?? { accessibility: true, input_monitoring: true, hotkey_running: true, fn_key_conflict: false };
+    const permissions = s.permissions ?? { accessibility: true, input_monitoring: true, hotkey_running: true, fn_key_conflict: false, microphone: "granted" };
     // In-memory data with the same rules as the Rust side (lengths, case-insensitive duplicates).
     const uid = () => Math.random().toString(36).slice(2);
     const clean = (v: string | null | undefined) => (v ?? "").trim();
@@ -27,7 +27,7 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
     const snips = [...(s.snippets ?? [])];
     const transcripts = [...((s.transcripts as any[]) ?? [])];
     const settings: Record<string, unknown> = {
-      shortcuts: {}, mic_id: null, languages: ["en"], auto_detect_language: false, theme: "system",
+      shortcuts: { push_to_talk: [["Fn"]] }, mic_id: null, languages: ["en"], auto_detect_language: false, theme: "system",
       launch_at_login: true, show_bar: true, storage_mode: "store", cleanup_level: "light", llm_provider: "none",
       groq_model: "llama-3.3-70b-versatile", ollama_model: "llama3.2:3b", ollama_url: "http://127.0.0.1:11434",
       sounds: true, onboarding_done: false, ...(s.settings ?? {}),
@@ -99,6 +99,13 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
       permissions_status: () => permissions,
       transcript_copy: () => null,
       hotkey_start: () => null,
+      hotkey_pause: () => null,
+      mic_test_start: () => null,
+      mic_test_stop: () => null,
+      dictation_cancel: () => null,
+      dictation_toggle: () => null,
+      dictation_undo: () => null,
+      "plugin:window|set_ignore_cursor_events": () => null,
       request_input_monitoring: () => true,
       "plugin:event|listen": (a: { event: string; handler: number }) => {
         listeners.set(a.event, [...(listeners.get(a.event) ?? []), a.handler]);

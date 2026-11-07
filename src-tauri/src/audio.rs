@@ -25,6 +25,24 @@ fn device_name(d: &cpal::Device) -> Option<String> {
     d.description().ok().map(|desc| desc.name().to_string())
 }
 
+#[link(name = "AVFoundation", kind = "framework")]
+unsafe extern "C" {}
+
+/// Microphone permission as macOS reports it: granted | denied | undetermined (asked on first recording).
+pub fn mic_permission() -> &'static str {
+    use objc2::msg_send;
+    use objc2::runtime::AnyClass;
+    let Some(cls) = AnyClass::get(c"AVCaptureDevice") else { return "unknown" };
+    let audio = objc2_foundation::NSString::from_str("soun"); // AVMediaTypeAudio
+    let status: isize = unsafe { msg_send![cls, authorizationStatusForMediaType: &*audio] };
+    match status {
+        0 => "undetermined",
+        1 | 2 => "denied", // restricted or denied
+        3 => "granted",
+        _ => "unknown",
+    }
+}
+
 /// Input devices for the microphone picker. The name is what gets stored as the choice.
 pub fn input_devices() -> Vec<Mic> {
     let host = cpal::default_host();

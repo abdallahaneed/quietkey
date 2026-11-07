@@ -110,9 +110,20 @@ fn validate_json(col: &str, v: &Value) -> Result<(), String> {
             Ok(())
         }
         "mic_ranking" => v.as_array().map(|_| ()).ok_or_else(|| "mic_ranking must be a list".into()),
-        "shortcuts" => v.as_object().map(|_| ()).ok_or_else(|| "shortcuts must be an object".into()),
+        "shortcuts" => push_to_talk(v).map(|_| ()),
         _ => Ok(()),
     }
+}
+
+/// The push-to-talk keys from the shortcuts setting, validated, as the listener's mask.
+pub fn push_to_talk(shortcuts: &Value) -> Result<u64, String> {
+    let keys: Vec<String> = shortcuts["push_to_talk"][0]
+        .as_array()
+        .ok_or("shortcuts.push_to_talk must be a list of keys")?
+        .iter()
+        .map(|k| k.as_str().map(String::from).ok_or("keys must be text"))
+        .collect::<Result<_, _>>()?;
+    crate::hotkey::parse_shortcut(&keys)
 }
 
 /// Fields the pipeline reads on every dictation.

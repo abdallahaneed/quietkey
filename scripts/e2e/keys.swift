@@ -1,4 +1,5 @@
-// Usage: keys fn-down | fn-up | space | left | esc | ctrlcmd-v | ctrlcmd-c | cmd-a | cmd-c | click | sleep:<s> ...
+// Usage: keys fn-down | fn-up | space | left | esc | ctrlcmd-v | ctrlcmd-c | cmd-a | cmd-c | click | click-bar:<dx> | sleep:<s> ...
+// click-bar clicks the dictation pill, dx points right of its centre (the bar sits at the bottom centre, see lib.rs place_bar).
 // Events are posted like real HID input.
 import CoreGraphics
 import Foundation
@@ -11,9 +12,9 @@ func key(_ code: CGKeyCode, _ flags: CGEventFlags) {
         e.post(tap: .cghidEventTap)
     }
 }
-func click() { // left click in the middle of the main screen
+func click(_ at: CGPoint? = nil) { // left click, in the middle of the main screen by default
     let b = CGDisplayBounds(CGMainDisplayID())
-    let p = CGPoint(x: b.midX, y: b.midY)
+    let p = at ?? CGPoint(x: b.midX, y: b.midY)
     for t in [CGEventType.leftMouseDown, .leftMouseUp] {
         CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)!.post(tap: .cghidEventTap)
     }
@@ -37,6 +38,10 @@ for a in CommandLine.arguments.dropFirst() {
     case "cmd-a": key(0, .maskCommand)
     case "cmd-c": key(8, .maskCommand)
     case "click": click()
+    case _ where a.hasPrefix("click-bar:"):
+        // pill centre: 88 pt above the screen bottom to the window, 8 pt padding, half of the 36 pt pill
+        let b = CGDisplayBounds(CGMainDisplayID())
+        click(CGPoint(x: b.midX + (Double(a.dropFirst(10)) ?? 0), y: b.maxY - 88 - 8 - 18))
     default:
         if a.hasPrefix("sleep:"), let s = Double(a.dropFirst(6)) { Thread.sleep(forTimeInterval: s) }
     }

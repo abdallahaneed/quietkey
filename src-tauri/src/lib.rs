@@ -23,6 +23,8 @@ struct AppState {
     db: Arc<Mutex<Connection>>,
     tx: Sender<Input>,
     tap_running: AtomicBool,
+    /// The onboarding microphone test: levels only, nothing is kept.
+    mic_test: Mutex<Option<audio::Recording>>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -83,6 +85,10 @@ fn settings_update(app: AppHandle, state: State<AppState>, patch: serde_json::Ma
         }
     }
     let out = store::settings_update(&conn, &patch)?;
+    if patch.contains_key("shortcuts") {
+        hotkey::set_shortcut(store::push_to_talk(&out["shortcuts"])?);
+    }
+    let _ = app.emit("settings://changed", &out);
     // Switching to a stricter retention mode applies right away, not at the next hourly run.
     if patch.contains_key("storage_mode") {
         let _ = store::retention_purge(&conn, out["storage_mode"].as_str().unwrap_or("store"), db::now_ms());
@@ -93,6 +99,32 @@ fn settings_update(app: AppHandle, state: State<AppState>, patch: serde_json::Ma
 #[tauri::command]
 fn mics_list() -> Vec<audio::Mic> {
     audio::input_devices()
+}
+
+/// Starts the microphone test. Levels arrive on "mic_test://level"; the audio is dropped on stop.
+#[tauri::command]
+fn mic_test_start(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
+    let mut slot = state.mic_test.lock().unwrap();
+    if slot.is_some() {
+        return Ok(());
+    }
+    let mic = store::mic_choice(&state.db.lock().unwrap());
+    let rec = audio::start(mic, move |rms| {
+        let _ = app.emit("mic_test://level", rms);
+    })
+    .map_err(|e| match e.to_string().as_str() {
+        "no_mic" => "No microphone found".to_string(),
+        other => format!("Microphone error: {other}"),
+    })?;
+    *slot = Some(rec);
+    Ok(())
+}
+
+#[tauri::command]
+fn mic_test_stop(state: State<AppState>) {
+    if let Some(rec) = state.mic_test.lock().unwrap().take() {
+        let _ = rec.stop();
+    }
 }
 
 #[tauri::command]
@@ -195,6 +227,11 @@ fn dictation_cancel(state: State<AppState>) {
 }
 
 #[tauri::command]
+fn dictation_undo(state: State<AppState>) {
+    let _ = state.tx.send(Input::Undo);
+}
+
+#[tauri::command]
 fn dictation_toggle(state: State<AppState>) {
     let _ = state.tx.send(Input::Toggle);
 }
@@ -205,6 +242,7 @@ struct Permissions {
     input_monitoring: bool,
     hotkey_running: bool,
     fn_key_conflict: bool,
+    microphone: &'static str,
 }
 
 #[tauri::command]
@@ -214,7 +252,14 @@ fn permissions_status(state: State<AppState>) -> Permissions {
         input_monitoring: hotkey::input_monitoring_granted(),
         hotkey_running: state.tap_running.load(Ordering::SeqCst),
         fn_key_conflict: hotkey::fn_key_conflict(),
+        microphone: audio::mic_permission(),
     }
+}
+
+/// While the shortcut editor records keys, pressing them must not start a dictation.
+#[tauri::command]
+fn hotkey_pause(on: bool) {
+    hotkey::set_paused(on);
 }
 
 #[tauri::command]
@@ -244,7 +289,10 @@ fn start_hotkey(state: &AppState) -> CmdResult<()> {
 /// Bottom centre of the primary screen, a little above the Dock.
 fn place_bar(app: &AppHandle) {
     let Some(bar) = app.get_webview_window("bar") else { return };
-    let _ = bar.set_ignore_cursor_events(true); // TODO: switch to a non-activating NSPanel; click-through for now so it never steals focus
+    // Click-through until the bar shows buttons; Bar.tsx turns clicks on and off per state.
+    let _ = bar.set_ignore_cursor_events(true);
+    #[cfg(target_os = "macos")]
+    make_panel(&bar);
     if let (Ok(Some(mon)), Ok(size)) = (bar.primary_monitor(), bar.outer_size()) {
         let m = mon.size();
         let x = (m.width as i32 - size.width as i32) / 2;
@@ -252,6 +300,44 @@ fn place_bar(app: &AppHandle) {
         let _ = bar.set_position(PhysicalPosition::new(x, y));
     }
     let _ = bar.show();
+}
+
+/// Turns the bar into a non-activating panel: clicking Stop or Undo does not take focus from the app being
+/// typed into, so the paste still lands there. Same approach as Spotlight-style panels.
+#[cfg(target_os = "macos")]
+fn make_panel(bar: &tauri::WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+    let Ok(ptr) = bar.ns_window() else { return };
+    let win = ptr as *mut AnyObject;
+    // The panel must never become key either: a key panel takes keystrokes (like Spotlight), so the paste's ⌘V
+    // would land in the bar instead of the app. Clicks still arrive because the webview accepts the first mouse.
+    let panel = AnyClass::get(c"UtterBarPanel").or_else(|| {
+        use objc2::runtime::{Bool, ClassBuilder, Sel};
+        extern "C-unwind" fn no(_: &AnyObject, _: Sel) -> Bool {
+            Bool::NO
+        }
+        let mut b = ClassBuilder::new(c"UtterBarPanel", AnyClass::get(c"NSPanel")?)?;
+        unsafe {
+            b.add_method(objc2::sel!(canBecomeKeyWindow), no as extern "C-unwind" fn(_, _) -> _);
+            b.add_method(objc2::sel!(canBecomeMainWindow), no as extern "C-unwind" fn(_, _) -> _);
+        }
+        Some(b.register())
+    });
+    let Some(panel) = panel else { return };
+    unsafe {
+        objc2::ffi::object_setClass(win, panel);
+        let mask: usize = msg_send![win, styleMask];
+        let _: () = msg_send![win, setStyleMask: mask | (1 << 7)]; // NSWindowStyleMaskNonactivatingPanel
+        let _: () = msg_send![win, setBecomesKeyOnlyIfNeeded: true];
+        let _: () = msg_send![win, setFloatingPanel: true];
+        #[cfg(debug_assertions)]
+        {
+            let cls: &AnyClass = msg_send![win, class];
+            let m: usize = msg_send![win, styleMask];
+            eprintln!("[panel] class={} styleMask={m:#x}", cls.name().to_string_lossy());
+        }
+    }
 }
 
 fn show_hub(app: &AppHandle) {
@@ -277,7 +363,7 @@ pub fn run() {
             let jobs_db = db.clone();
 
             let (tx, rx) = mpsc::channel::<Input>();
-            app.manage(AppState { db: db.clone(), tx, tap_running: AtomicBool::new(false) });
+            app.manage(AppState { db: db.clone(), tx, tap_running: AtomicBool::new(false), mic_test: Mutex::new(None) });
 
             // Model load + warm-up off the main thread; the first transcription is ~40% slower without it.
             let handle = app.handle().clone();
@@ -308,6 +394,9 @@ pub fn run() {
             })?;
 
             let state = app.state::<AppState>();
+            if let Some(mask) = store::settings_get(&state.db.lock().unwrap()).ok().and_then(|s| store::push_to_talk(&s["shortcuts"]).ok()) {
+                hotkey::set_shortcut(mask);
+            }
             if let Err(e) = start_hotkey(&state) {
                 eprintln!("hotkey not started: {e} (Input Monitoring / Accessibility missing)");
             }
@@ -367,9 +456,11 @@ pub fn run() {
             copy_last,
             dictation_cancel,
             dictation_toggle,
+            dictation_undo,
             permissions_status,
             request_input_monitoring,
             hotkey_start,
+            hotkey_pause,
             transcript_delete,
             data_delete,
             settings_get,
@@ -389,7 +480,9 @@ pub fn run() {
             llm_key_set,
             llm_key_delete,
             llm_test,
-            mics_list
+            mics_list,
+            mic_test_start,
+            mic_test_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

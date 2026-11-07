@@ -8,6 +8,7 @@
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-set-ignore-cursor-events",
     "opener:default",
     {
       "identifier": "opener:allow-open-url",

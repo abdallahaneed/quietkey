@@ -1,7 +1,7 @@
 // Home: dictation history grouped by day, newest first, live-updating.
 import { useEffect, useMemo, useState } from "react";
 import { Copy, Mic, MoreHorizontal } from "lucide-react";
-import { api, events, type Permissions, type Transcript } from "../../lib/api";
+import { api, events, pushToTalk, type Permissions, type Transcript } from "../../lib/api";
 import { EmptyState, IconButton, KeyCaps, Menu, Modal, Notice, PageHeader, SkeletonRows, Button, cx } from "../../ui";
 import type { Nav } from "../Hub";
 
@@ -21,6 +21,8 @@ export function Home({ nav }: { nav: Nav }) {
   const [perm, setPerm] = useState<Permissions | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Transcript | null>(null);
+  const [keys, setKeys] = useState<string[]>(["Fn"]);
+  useEffect(() => { api.settings().then((s) => setKeys(pushToTalk(s))).catch(() => {}); }, []);
 
   const remove = async (t: Transcript) => {
     setConfirmDelete(null);
@@ -60,14 +62,14 @@ export function Home({ nav }: { nav: Nav }) {
     setTimeout(() => setCopied(null), 1500);
   };
 
-  const needsSetup = perm && !(perm.accessibility && perm.hotkey_running && !perm.fn_key_conflict);
+  const needsSetup = perm && !(perm.accessibility && perm.hotkey_running && !(perm.fn_key_conflict && keys.includes("Fn")));
 
   return (
     <>
       <PageHeader
         title="Your dictations"
         description={rows ? `${weekWords.toLocaleString()} words in the last 7 days` : undefined}
-        actions={<span className="flex items-center gap-2 text-sm text-muted">Hold <KeyCaps keys={["Fn"]} /> and talk</span>}
+        actions={<span className="flex items-center gap-2 text-sm text-muted">Hold <KeyCaps keys={keys} /> and talk</span>}
       />
       {needsSetup && (
         <div className="mb-4">
@@ -82,7 +84,7 @@ export function Home({ nav }: { nav: Nav }) {
         <EmptyState
           icon={<Mic className="size-8" />}
           title="Nothing dictated yet"
-          body="Click into any text field, hold the fn key, say a sentence, then let go. It shows up here too."
+          body="Click into any text field, hold your dictation keys, say a sentence, then let go. It shows up here too."
         />
       )}
       {groups.map(([label, items]) => (

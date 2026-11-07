@@ -40,6 +40,16 @@ pub fn frontmost_app() -> FrontApp {
     }
 }
 
+/// Hands keyboard focus back to `pid`. A click on the bar panel does not activate Utter, but macOS still routes
+/// keys to Utter's process afterwards, so the paste would go nowhere.
+pub fn give_focus(pid: Option<i32>) {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    let Some(app) = pid.and_then(|p| NSRunningApplication::runningApplicationWithProcessIdentifier(p)) else { return };
+    #[allow(deprecated)] // the replacement (activate(from:)) needs macOS 14; this app supports 12
+    app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps);
+    std::thread::sleep(Duration::from_millis(150));
+}
+
 /// Does the app's focused element take text? Some(false) only when macOS clearly reports a non-text element
 /// (Finder's file list, a plain window). None when it cannot tell: Chrome and some Electron apps hide their
 /// accessibility tree until an assistive app asks, so unknown must never block a paste.

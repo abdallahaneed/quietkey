@@ -83,16 +83,16 @@ test.describe("Home", () => {
 test.describe("Setup", () => {
   test("permissions not granted: Allow buttons and a start notice", async ({ page }) => {
     await open(page, "setup", {
-      permissions: { accessibility: false, input_monitoring: false, hotkey_running: false, fn_key_conflict: false },
+      permissions: { accessibility: false, input_monitoring: false, hotkey_running: false, fn_key_conflict: false, microphone: "denied" },
     });
-    await expect(page.getByRole("button", { name: "Allow" })).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Allow" })).toHaveCount(3);
     await expect(page.getByRole("button", { name: "Start listening" })).toBeVisible();
     await expectNoSeriousA11yIssues(page);
   });
 
   test("macOS fn conflict is explained with a way to fix it", async ({ page }) => {
     await open(page, "setup", {
-      permissions: { accessibility: true, input_monitoring: true, hotkey_running: true, fn_key_conflict: true },
+      permissions: { accessibility: true, input_monitoring: true, hotkey_running: true, fn_key_conflict: true, microphone: "granted" },
     });
     await expect(page.getByText(/Press fn key to/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Open Keyboard settings" })).toBeVisible();
@@ -153,16 +153,58 @@ test.describe("Dictation bar", () => {
     await installFakeBackend(page);
     await page.goto("/?w=bar");
     const status = page.getByRole("status");
-    await expect(status).toHaveAttribute("aria-label", "Ready, hold fn to talk");
+    await expect(status).toHaveText("Ready, hold fn to talk");
     const emit = (state: string, message: string | null = null) =>
       page.evaluate(([s, m]) => (window as any).__fake.emit("dictation://state", { state: s, message: m }), [state, message] as const);
     await emit("recording");
-    await expect(status).toHaveAttribute("aria-label", "Listening");
+    await expect(status).toHaveText("Listening");
     await emit("processing");
-    await expect(status).toHaveAttribute("aria-label", "Writing it down");
+    await expect(status).toHaveText("Writing it down");
     await emit("error", "No microphone found");
     await expect(status).toContainText("No microphone found");
     await emit("idle");
-    await expect(status).toHaveAttribute("aria-label", "Ready, hold fn to talk");
+    await expect(status).toHaveText("Ready, hold fn to talk");
+  });
+});
+
+test.describe("Bar buttons", () => {
+  test("hands-free shows Cancel and Stop; a cancelled dictation offers Undo", async ({ page }) => {
+    await installFakeBackend(page);
+    await page.goto("/?w=bar");
+    const emit = (state: string) => page.evaluate((s) => (window as any).__fake.emit("dictation://state", { state: s, message: null }), state);
+    const calls = () => page.evaluate(() => (window as any).__fake.calls.map((c: { cmd: string }) => c.cmd));
+    await emit("hands_free");
+    await page.getByRole("button", { name: "Stop and insert" }).click();
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await emit("cancelled");
+    await page.getByRole("button", { name: "Undo" }).click();
+    const cmds = await calls();
+    expect(cmds).toEqual(expect.arrayContaining(["dictation_toggle", "dictation_cancel", "dictation_undo"]));
+    // clicks are let through only while buttons show
+    expect(cmds).toContain("plugin:window|set_ignore_cursor_events");
+  });
+});
+
+test.describe("Shortcut editor", () => {
+  test("records ⌥ + ⌃ and saves it, Use fn resets", async ({ page }) => {
+    await open(page, "settings");
+    await page.getByRole("button", { name: "Change" }).click();
+    await page.keyboard.down("Alt"); // Playwright sends AltLeft; a single left key is refused by the backend, so use two
+    await page.keyboard.down("Control");
+    await page.keyboard.up("Control");
+    await page.keyboard.up("Alt");
+    const saved = await page.evaluate(() => (window as any).__TAURI_INTERNALS__.invoke("settings_get"));
+    expect(saved.shortcuts.push_to_talk).toEqual([["LeftOpt", "LeftCtrl"]]);
+    expect(saved.shortcuts.hands_free).toEqual([["LeftOpt", "LeftCtrl", "Space"]]);
+    await page.getByRole("button", { name: "Use fn" }).click();
+    const reset = await page.evaluate(() => (window as any).__TAURI_INTERNALS__.invoke("settings_get"));
+    expect(reset.shortcuts.push_to_talk).toEqual([["Fn"]]);
+  });
+
+  test("a letter key is refused with a reason", async ({ page }) => {
+    await open(page, "settings");
+    await page.getByRole("button", { name: "Change" }).click();
+    await page.keyboard.press("k");
+    await expect(page.getByRole("alert")).toContainText("modifier keys only");
   });
 });

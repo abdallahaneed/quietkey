@@ -80,7 +80,9 @@ fi
 
 if run F02-H2; then
   use speech; printf 'CHROME-CLIP' | pbcopy; b=$(rows)
-  open -a "Google Chrome" "data:text/html,<title>utter-test</title><textarea autofocus style='position:fixed;inset:0;width:100vw;height:100vh'></textarea>"; sleep 2.5
+  open -a "Google Chrome" "data:text/html,<title>utter-test</title><textarea autofocus style='position:fixed;inset:0;width:100vw;height:100vh'></textarea>"
+  # a cold Chrome start can take longer than a fixed wait
+  for i in {1..20}; do [[ "$(osascript -e 'tell application "System Events" to name of first process whose frontmost is true')" == "Google Chrome" ]] && break; sleep 0.5; done; sleep 1.5
   $K click sleep:0.5
   hold 1.5; wait_rows $((b+1))
   clip=$(pbpaste)
@@ -212,6 +214,24 @@ if run F03-E1; then
 fi
 
 # --- F04 recovery ---------------------------------------------------------------------
+if run F03-H2; then
+  use speech; new_doc; b=$(rows)
+  $K fn-down sleep:0.15 fn-up sleep:0.15 fn-down sleep:0.15 fn-up sleep:1.5 fn-down sleep:0.1 fn-up; wait_rows $((b+1))
+  check F03-H2 "double-press fn locks hands-free, next press stops and pastes" '[[ "$(doc)" == *meeting* ]] && (( $(rows) == b + 1 ))'
+fi
+
+if run F03-H3; then
+  use speech; new_doc; b=$(rows)
+  $K fn-down space fn-up sleep:1.5 click-bar:41; wait_rows $((b+1))
+  check F03-H3 "clicking Stop on the bar pastes into the app that had focus" '[[ "$(doc)" == *meeting* ]]'
+fi
+
+if run F03-E2; then
+  use speech; new_doc; b=$(rows)
+  $K fn-down sleep:1.5 esc fn-up sleep:1 click-bar:31; wait_rows $((b+1))
+  check F03-E2 "Undo on the bar after Esc transcribes and pastes after all" '[[ "$(doc)" == *meeting* ]] && (( $(rows) == b + 1 ))'
+fi
+
 if run F04-H1; then
   new_doc; want=$(last final_text)
   $K ctrlcmd-v; sleep 1.5

@@ -2,7 +2,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { api, applyTheme, type DeleteCategory, type Mic, type Settings as S } from "../../lib/api";
+import { ShortcutEditor } from "../parts/ShortcutEditor";
+import { api, applyTheme, pushToTalk, type DeleteCategory, type Mic, type Settings as S } from "../../lib/api";
 import { Button, Checkbox, IconButton, KeyCaps, Modal, Notice, PageHeader, RadioCards, SelectMenu, SkeletonRows, Switch, TextInput } from "../../ui";
 
 const LANGUAGES: [string, string][] = [
@@ -225,8 +226,11 @@ export function Settings() {
         </div>
       </Section>
 
-      <Section id="shortcuts" title="Shortcuts" description="Changing shortcuts is not available yet.">
-        {([["Hold to dictate", ["Fn"]], ["Hands-free on / off", ["Fn", "Space"]], ["Cancel", ["Escape"]], ["Paste last dictation again", ["Ctrl", "Cmd", "V"]], ["Copy last dictation", ["Ctrl", "Cmd", "C"]]] as [string, string[]][]).map(([label, keys]) => (
+      <Section id="shortcuts" title="Shortcuts" description="Hold the dictation keys to talk. Press them twice quickly, or add Space, to keep talking hands-free.">
+        <Row label="Hold to dictate" hint="Modifier keys only, so nothing gets typed while you hold them.">
+          <ShortcutEditor settings={s} onSaved={setS} />
+        </Row>
+        {([["Hands-free on / off", [...pushToTalk(s), "Space"]], ["Cancel", ["Escape"]], ["Paste last dictation again", ["Ctrl", "Cmd", "V"]], ["Copy last dictation", ["Ctrl", "Cmd", "C"]]] as [string, string[]][]).map(([label, keys]) => (
           <Row key={label} label={label}><KeyCaps keys={keys} /></Row>
         ))}
       </Section>
@@ -234,7 +238,7 @@ export function Settings() {
       <Section id="system" title="System">
         <div className="rounded-lg border border-border px-4">
           <Switch label="Start Utter when you log in" checked={s.launch_at_login} onChange={(v) => update({ launch_at_login: v })} />
-          <Switch label="Show the dictation bar" description="When it is hidden, Utter still listens for fn." checked={s.show_bar} onChange={(v) => update({ show_bar: v })} />
+          <Switch label="Show the dictation bar" description="When it is hidden, Utter still listens for your shortcut." checked={s.show_bar} onChange={(v) => update({ show_bar: v })} />
         </div>
       </Section>
 

@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 const MIN_HOLD: Duration = Duration::from_millis(500); // shorter taps are accidental presses, ignore them
+const DOUBLE_PRESS: Duration = Duration::from_millis(400); // a second tap this soon after a short one locks hands-free
+const UNDO_FOR: Duration = Duration::from_secs(6); // a cancelled recording can be brought back this long
 const WARN_AT: Duration = Duration::from_secs(19 * 60);
 const STOP_AT: Duration = Duration::from_secs(20 * 60);
 
@@ -26,6 +28,8 @@ pub enum Input {
     Key(HotkeyEvent),
     Cancel,
     Toggle,
+    /// Transcribe the recording that was just cancelled after all.
+    Undo,
 }
 
 #[derive(Serialize, Clone)]
@@ -42,6 +46,8 @@ enum Mode {
 
 struct Active {
     rec: Recording,
+    /// The app in front when recording started, in case Utter itself is in front at the end.
+    front: paste::FrontApp,
     started: Instant,
     mode: Mode,
     warned: bool,
@@ -52,6 +58,8 @@ struct Job {
     samples: Vec<f32>,
     duration_ms: i64,
     front: paste::FrontApp,
+    /// Stopped from a bar click: give focus back to `front` before pasting.
+    refocus: bool,
 }
 
 pub struct Pipeline {
@@ -73,7 +81,7 @@ impl Pipeline {
             emit(&self.app, "error", Some("Could not start the dictation worker".into()));
             return;
         }
-        Machine { app: self.app, db: self.db, jobs, ready }.run(rx);
+        Machine { app: self.app, db: self.db, jobs, ready, last_tap: None, cancelled: None }.run(rx);
     }
 }
 
@@ -82,10 +90,14 @@ struct Machine {
     db: Arc<Mutex<Connection>>,
     jobs: Sender<Job>,
     ready: bool,
+    /// When the last too-short tap ended, for the double-press.
+    last_tap: Option<Instant>,
+    /// The last cancelled recording, kept briefly for Undo.
+    cancelled: Option<(Job, Instant)>,
 }
 
 impl Machine {
-    fn run(self, rx: Receiver<Input>) {
+    fn run(mut self, rx: Receiver<Input>) {
         let mut active: Option<Active> = None;
         loop {
             let input = match rx.recv_timeout(Duration::from_millis(250)) {
@@ -94,12 +106,15 @@ impl Machine {
                 Err(RecvTimeoutError::Disconnected) => return,
             };
 
+            if self.cancelled.as_ref().is_some_and(|(_, at)| at.elapsed() > UNDO_FOR) {
+                self.cancelled = None; // free the audio
+            }
             // Session guard runs on every tick.
             if let Some(a) = active.as_mut() {
                 let el = a.started.elapsed();
                 if el >= STOP_AT {
                     let a = active.take().unwrap();
-                    self.finish(a);
+                    self.finish(a, false);
                     continue;
                 } else if el >= WARN_AT && !a.warned {
                     a.warned = true;
@@ -111,7 +126,23 @@ impl Machine {
             #[cfg(debug_assertions)]
             eprintln!("[input] {input:?} recording={}", active.is_some());
             active = match (active, input) {
-                (None, Input::Key(HotkeyEvent::FnDown)) => self.start(Mode::Hold),
+                (None, Input::Key(HotkeyEvent::FnDown)) => {
+                    // Its FnUp arrives in Locked mode and is ignored; the next press stops the recording.
+                    let double = self.last_tap.take().is_some_and(|t| t.elapsed() < DOUBLE_PRESS);
+                    self.start(if double { Mode::Locked } else { Mode::Hold })
+                }
+                (None, Input::Undo) => {
+                    match self.cancelled.take() {
+                        Some((job, at)) if at.elapsed() <= UNDO_FOR => {
+                            emit(&self.app, "processing", None);
+                            if self.jobs.send(job).is_err() {
+                                emit(&self.app, "error", Some("Dictation worker stopped".into()));
+                            }
+                        }
+                        _ => emit(&self.app, "error", Some("Too late to undo".into())),
+                    }
+                    None
+                }
                 (None, Input::Toggle) => self.start(Mode::Locked),
                 (a, Input::Key(HotkeyEvent::PasteLast)) => {
                     self.paste_last();
@@ -133,9 +164,10 @@ impl Machine {
                 (Some(a), Input::Key(HotkeyEvent::FnUp)) if a.mode == Mode::Hold => {
                     if a.started.elapsed() < MIN_HOLD {
                         let _ = a.rec.stop();
+                        self.last_tap = Some(Instant::now());
                         emit(&self.app, "idle", None);
                     } else {
-                        self.finish(a);
+                        self.finish(a, false);
                     }
                     None
                 }
@@ -145,13 +177,15 @@ impl Machine {
                     None
                 }
                 // The FnUp that follows arrives with no recording active and is ignored.
-                (Some(a), Input::Key(HotkeyEvent::FnDown) | Input::Toggle) if a.mode == Mode::Locked => {
-                    self.finish(a);
+                (Some(a), i @ (Input::Key(HotkeyEvent::FnDown) | Input::Toggle)) if a.mode == Mode::Locked => {
+                    self.finish(a, i == Input::Toggle);
                     None
                 }
                 (Some(a), Input::Key(HotkeyEvent::Escape) | Input::Cancel) => {
-                    let _ = a.rec.stop();
-                    // TODO: offer Undo to transcribe the cancelled audio after all.
+                    let front = target(a.front);
+                    let (samples, duration_ms) = a.rec.stop();
+                    // Undo is always a bar click
+                    self.cancelled = Some((Job { samples, duration_ms, front, refocus: true }, Instant::now()));
                     emit(&self.app, "cancelled", None);
                     None
                 }
@@ -193,7 +227,7 @@ impl Machine {
                 let state = if mode == Mode::Hold { "recording" } else { "hands_free" };
                 let note = rec.used_fallback.then(|| "Chosen microphone not found, using the default".to_string());
                 emit(&self.app, state, note);
-                Some(Active { rec, started: Instant::now(), mode, warned: false })
+                Some(Active { rec, front: paste::frontmost_app(), started: Instant::now(), mode, warned: false })
             }
             Err(e) => {
                 let msg = match e.to_string().as_str() {
@@ -208,14 +242,20 @@ impl Machine {
     }
 
     /// Stops the recording and hands it to the worker. Returns at once, so the next press records right away.
-    fn finish(&self, a: Active) {
-        let front = paste::frontmost_app(); // capture before anything can change focus
+    fn finish(&self, a: Active, refocus: bool) {
+        let front = target(a.front); // capture before anything can change focus
         emit(&self.app, "processing", None);
         let (samples, duration_ms) = a.rec.stop();
-        if self.jobs.send(Job { samples, duration_ms, front }).is_err() {
+        if self.jobs.send(Job { samples, duration_ms, front, refocus }).is_err() {
             emit(&self.app, "error", Some("Dictation worker stopped".into()));
         }
     }
+}
+
+/// The app to paste into: the one in front now, unless that is Utter itself (after a click on the bar).
+fn target(at_start: paste::FrontApp) -> paste::FrontApp {
+    let now = paste::frontmost_app();
+    if now.pid == Some(std::process::id() as i32) { at_start } else { now }
 }
 
 struct Worker {
@@ -232,7 +272,7 @@ impl Worker {
     }
 
     fn handle(&mut self, job: Job) {
-        let Job { samples, duration_ms, front } = job;
+        let Job { samples, duration_ms, front, refocus } = job;
         if !audio::has_speech(&samples) {
             emit(&self.app, "error", Some("No speech heard".into()));
             return;
@@ -248,6 +288,9 @@ impl Worker {
                     self.save(&out, duration_ms, &front, "paste_failed", Some("no_text_field"));
                     emit(&self.app, "error", Some("No text field selected. Click one, then press ⌃⌘V".into()));
                     return;
+                }
+                if refocus {
+                    paste::give_focus(front.pid);
                 }
                 let tp = Instant::now();
                 let pasted = paste::paste_text(&out.final_text);
