@@ -20,11 +20,12 @@ const MAIN: { id: Route; label: string; icon: ComponentType<{ className?: string
   { id: "dictionary", label: "Dictionary", icon: BookA },
   { id: "snippets", label: "Snippets", icon: TextQuote },
   { id: "style", label: "Style", icon: Palette },
-  { id: "insights", label: "Insights", icon: BarChart3 },
+  // Placeholder screen, dev builds only until it has content.
+  ...(import.meta.env.DEV ? [{ id: "insights" as Route, label: "Insights", icon: BarChart3 }] : []),
 ];
 const BOTTOM: typeof MAIN = [
   { id: "setup", label: "Setup", icon: Sparkles },
-  { id: "design", label: "Design system", icon: SwatchBook },
+  ...(import.meta.env.DEV ? [{ id: "design" as Route, label: "Design system", icon: SwatchBook }] : []), // developer page
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
 

@@ -71,7 +71,7 @@ test.describe("Settings", () => {
 
   test("Groq: wrong key refused, real key saved to the Keychain, then removed", async ({ page }) => {
     await open(page, "settings");
-    await page.getByRole("radio", { name: /^Groq/ }).click();
+    await page.getByRole("radiogroup", { name: "AI cleanup provider" }).getByRole("radio", { name: /^Groq/ }).click();
     expect(await lastPatch(page)).toEqual({ llm_provider: "groq" });
     await page.getByLabel("Groq API key").fill("hello");
     await page.getByRole("button", { name: "Save key" }).click();

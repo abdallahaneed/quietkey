@@ -30,7 +30,7 @@ const BOOL_COLS: &[&str] = &[
     "press_enter_enabled", "command_mode_enabled", "onboarding_done",
 ];
 const TEXT_COLS: &[&str] = &[
-    "mic_id", "theme", "bar_edge", "storage_mode", "cleanup_level", "llm_provider", "groq_model", "ollama_model", "ollama_url",
+    "mic_id", "theme", "bar_edge", "storage_mode", "cleanup_level", "llm_provider", "groq_model", "ollama_model", "ollama_url", "stt_engine",
 ];
 const JSON_COLS: &[&str] = &["shortcuts", "mic_ranking", "languages"];
 
@@ -137,11 +137,13 @@ pub struct PipelineSettings {
     pub language: Option<String>,
     /// Several languages picked with auto-detect off: Whisper chooses among these only.
     pub candidates: Vec<String>,
+    /// "local" or "groq".
+    pub stt_engine: String,
 }
 
 pub fn pipeline_settings(conn: &Connection) -> rusqlite::Result<PipelineSettings> {
     conn.query_row(
-        "select cleanup_level, llm_provider, groq_model, ollama_model, ollama_url, storage_mode, languages, auto_detect_language
+        "select cleanup_level, llm_provider, groq_model, ollama_model, ollama_url, storage_mode, languages, auto_detect_language, stt_engine
          from settings where id = 1",
         [],
         |r| {
@@ -152,13 +154,12 @@ pub fn pipeline_settings(conn: &Connection) -> rusqlite::Result<PipelineSettings
             let candidates = if auto == 0 && langs.len() > 1 { langs } else { Vec::new() };
             Ok(PipelineSettings {
                 cleanup_level: r.get(0)?, llm_provider: r.get(1)?, groq_model: r.get(2)?, ollama_model: r.get(3)?,
-                ollama_url: r.get(4)?, storage_mode: r.get(5)?, language, candidates,
+                ollama_url: r.get(4)?, storage_mode: r.get(5)?, language, candidates, stt_engine: r.get(8)?,
             })
         },
     )
 }
 
-/// The microphone the user picked, by device name. None = system default.
 /// The picked Whisper model id. Written only by model_select once the model has loaded, never by settings_update,
 /// so it always names a file that is on disk.
 pub fn model_choice(conn: &Connection) -> Option<String> {
@@ -169,6 +170,12 @@ pub fn set_model(conn: &Connection, id: &str) -> rusqlite::Result<()> {
     conn.execute("update settings set model = ?1, updated_at = ?2 where id = 1", params![id, now_ms()]).map(|_| ())
 }
 
+/// True when speech goes to Groq instead of the local model.
+pub fn uses_groq(conn: &Connection) -> bool {
+    conn.query_row("select stt_engine from settings where id = 1", [], |r| r.get::<_, String>(0)).is_ok_and(|e| e == "groq")
+}
+
+/// The microphone the user picked, by device name. None = system default.
 pub fn mic_choice(conn: &Connection) -> Option<String> {
     conn.query_row("select mic_id from settings where id = 1", [], |r| r.get::<_, Option<String>>(0)).ok().flatten()
 }

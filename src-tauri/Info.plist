@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Quietkey listens only while you hold the dictation key, and turns your speech into text on this Mac.</string>
+  <string>Quietkey listens only while you hold the dictation key, and turns what you say into text.</string>
   <key>LSUIElement</key>
   <true/>
 </dict>

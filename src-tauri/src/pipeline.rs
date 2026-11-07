@@ -209,8 +209,8 @@ impl Machine {
     }
 
     fn start(&self, mode: Mode) -> Option<Active> {
-        if !READY.load(Ordering::SeqCst) {
-            emit(&self.app, "error", Some("Speech model isn't ready. Quit and reopen Quietkey".into()));
+        if !READY.load(Ordering::SeqCst) && !store::uses_groq(&self.db.lock().unwrap()) {
+            emit(&self.app, "error", Some("No speech model yet. Open Quietkey to set one up".into()));
             return None;
         }
         let app = self.app.clone();
@@ -332,16 +332,20 @@ impl Worker {
                 store::tone_for_app(&conn, bundle),
             )
         };
-        let mut loaded = STT.lock().unwrap();
-        let stt = loaded.as_mut().ok_or_else(|| anyhow::anyhow!("model not loaded"))?;
         let t0 = Instant::now();
         let prompt = words.join(", ");
-        let (raw, language) = if cfg.candidates.is_empty() {
-            (stt.transcribe(samples, cfg.language.as_deref(), &prompt)?, cfg.language.clone())
+        let (raw, language) = if cfg.stt_engine == "groq" {
+            (llm::groq_transcribe(samples, cfg.language.as_deref(), &prompt)?, cfg.language.clone())
         } else {
-            stt.transcribe_among(samples, &cfg.candidates, &prompt)?
+            // Held only while transcribing: cleanup below may call Groq or Ollama, a model switch need not wait for that.
+            let mut loaded = STT.lock().unwrap();
+            let stt = loaded.as_mut().ok_or_else(|| anyhow::anyhow!("no speech model yet, open Quietkey to download one"))?;
+            if cfg.candidates.is_empty() {
+                (stt.transcribe(samples, cfg.language.as_deref(), &prompt)?, cfg.language.clone())
+            } else {
+                stt.transcribe_among(samples, &cfg.candidates, &prompt)?
+            }
         };
-        drop(loaded); // cleanup below may call Groq or Ollama; a model switch need not wait for that
         #[cfg(debug_assertions)]
         eprintln!("[timing] transcribe {:?} for {:.1}s audio", t0.elapsed(), samples.len() as f32 / 16_000.0);
         if raw.is_empty() {

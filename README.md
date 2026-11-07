@@ -1,72 +1,111 @@
-# Quietkey
+<p align="center">
+  <img src="assets/icon-1024.png" width="128" height="128" alt="Quietkey icon">
+</p>
 
-Free, open-source voice dictation for macOS. Hold `fn`, talk, let go, and the text is typed wherever your cursor is: Mail, Slack, Notes, a browser, a terminal.
+<h1 align="center">Quietkey</h1>
 
-Speech recognition runs on your Mac with Whisper, so your audio never leaves the computer. No account, no subscription.
+<p align="center">
+  Hold a key, talk, and your words are typed into any app on your Mac.<br>
+  Free and open source. A private alternative to Wispr Flow, Superwhisper and MacWhisper.
+</p>
+
+<p align="center">
+  <a href="https://github.com/abdallahaneed/quietkey/releases/latest/download/Quietkey.dmg"><b>⬇ Download Quietkey.dmg</b></a><br>
+  <sub>Apple Silicon and Intel Macs, macOS 12 or later</sub>
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-home.png" alt="Quietkey: your dictations, ready to copy or fix" width="720">
+</p>
+
+## Quick start
+
+1. [Download Quietkey.dmg](https://github.com/abdallahaneed/quietkey/releases/latest/download/Quietkey.dmg) and drag Quietkey into Applications.
+2. Open it once with a right-click on Quietkey → **Open** → **Open**. (The app is not notarized by Apple yet, so a normal double-click is blocked the first time. See [FAQ](#faq).)
+3. Pick how speech becomes text:
+   - **Groq, with your free key:** get a key at [console.groq.com/keys](https://console.groq.com/keys) (no card), paste it. Nothing to download.
+   - **On this Mac:** one click downloads a speech model (60 to 574 MB). Works offline, your voice never leaves the Mac.
+4. Allow the three permissions Setup asks for, then click any text field, **hold `fn`**, talk, let go.
+
+That's it. No account, no subscription, no word limit.
+
+## Why Quietkey
+
+- **Free, for real.** No trial, no weekly word cap, no paid tier. MIT licence.
+- **Private by default.** Run Whisper on your Mac and nothing is uploaded. Or use your own Groq key: audio goes to Groq and nowhere else. There is no Quietkey server.
+- **Your first words are kept.** The microphone stays ready for 20 seconds after a dictation, so the next one starts the instant you press the key.
+- **Names come out right.** Select a misheard word in your history and choose **Add to dictionary**. Whisper spells it your way from then on.
+- **Pick the model that fits your Mac.** Base uses about 180 MB of memory, Small about 350 MB, Large v3 Turbo about 700 MB and hears names and accents best.
+- **Cleans up as you talk, offline.** Removes "um", repeated words and corrections like "at 5, actually 6". Say "new line" or "new paragraph".
+- **Never pastes the wrong thing.** Your clipboard is put back after every paste, and `⌃⌘V` pastes your last dictation again.
+
+<p align="center">
+  <img src="assets/screenshot-setup.png" alt="Setup: choose Groq or a local model" width="620">
+</p>
 
 ## Features
 
-- Hold `fn` to dictate, or press `fn` + `Space` for hands-free and `fn` again to stop. `Esc` cancels.
-- Local transcription with whisper.cpp, Metal on Apple Silicon. Pick the model in Settings: Base (60 MB download, about 180 MB of memory), Small (190 MB, about 350 MB) or Large v3 Turbo (574 MB, about 700 MB, the most accurate). Quietkey downloads it for you.
-- Your first words are kept: the microphone stays open for 20 seconds after a dictation, so the next one starts the moment you press the key. The macOS mic indicator stays on during that time; nothing is recorded.
-- Offline cleanup: removes "um" and "uh", repeated words, and self-corrections such as "at 5, actually 6". Say "new line" or "new paragraph" for line breaks.
-- Dictionary for names and terms Whisper gets wrong, with "wrong spelling => right spelling" corrections. Select a misheard word in your history and choose Add to dictionary.
-- Snippets: say a short cue like "my email" and get the full text.
-- Optional AI cleanup, still free: a [Groq](https://console.groq.com) API key (free tier, no card), or a local model through [Ollama](https://ollama.com). Only the text is sent, never audio.
-- `⌃⌘V` pastes your last dictation again, `⌃⌘C` copies it.
-- History of your dictations, or turn history off completely.
-- Your clipboard is put back after every paste.
-- With two displays, the dictation bar opens on the one you are working on.
+- Hold `fn` to talk. Double-press `fn` (or `fn` + `Space`) for hands-free, press again to stop. `Esc` cancels, with Undo.
+- Choose another shortcut in Settings if you use `fn` for something else.
+- Dictionary with "heard → write" corrections, import from a text or CSV file.
+- Snippets: say "my email" and get the full address.
+- Tone per kind of app: casual in chats, formal in email.
+- Optional AI cleanup with your Groq key or a local [Ollama](https://ollama.com) model: fixes grammar, keeps your meaning.
+- History you can keep, auto-delete after 24 hours, or switch off.
+- The dictation bar sits above the Dock on the screen you are using, light and dark mode.
 
-## Requirements
+## Groq or on this Mac?
 
-- macOS 12 or later, Apple Silicon recommended
-- 60 to 574 MB of disk space for the speech model, depending on the one you pick
+| | Groq (your free key) | On this Mac |
+| --- | --- | --- |
+| Setup | paste a key | one model download |
+| Speed | very fast on any Mac | fast on Apple Silicon |
+| Works offline | no | yes |
+| Where your audio goes | Groq's servers | nowhere |
+| Cost | free tier | free |
+
+You can switch any time in Settings → Speech.
+
+## Privacy
+
+There is no Quietkey server and no analytics. Your history, dictionary and settings are stored in `~/Library/Application Support/dev.abdallah.quietkey/` and your Groq key in the macOS Keychain. With a local model, nothing leaves your Mac. With Groq, each recording is sent to Groq to be transcribed. AI cleanup, if you turn it on, sends text only.
+
+## FAQ
+
+**macOS says Quietkey "can't be opened" or "is damaged".**
+The app is not notarized yet (that needs a paid Apple Developer account). Right-click Quietkey in Applications → **Open** → **Open**. If macOS still refuses, run this once in Terminal:
+
+```bash
+xattr -cr /Applications/Quietkey.app
+```
+
+**Pressing `fn` opens the emoji picker or Apple's dictation.**
+System Settings → Keyboard → **Press 🌐 key to** → **Do Nothing**. Or pick a different shortcut in Quietkey's Settings.
+
+**Why does the microphone dot stay on after I stop?**
+The mic stays open for 20 seconds so your next dictation starts instantly. Nothing is recorded in that time.
+
+**Which permissions does it need, and why?**
+Input Monitoring to notice your shortcut, Accessibility to type into other apps, and the Microphone. Quietkey never takes screenshots.
+
+**Does it work in every app?**
+Anywhere you can paste text: Mail, Slack, Notes, browsers, Terminal, VS Code, Word.
 
 ## Build from source
 
 ```bash
-# Rust, Node 20+ and cmake
-brew install cmake
+brew install cmake        # plus Rust and Node 20+
 npm install
-
-# Speech model (574 MB)
-mkdir -p ~/Library/Application\ Support/dev.abdallah.quietkey/models
-curl -L -o ~/Library/Application\ Support/dev.abdallah.quietkey/models/ggml-large-v3-turbo-q5_0.bin \
-  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
-# sha256: 394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2
-
 npm run tauri dev
 ```
 
-On first launch, allow **Input Monitoring** (to notice the `fn` key), **Accessibility** (to type into other apps) and the **Microphone**.
+Tests: `cd src-tauri && cargo test --lib`, `npx playwright test`, and `scripts/e2e/suite.sh` drives the real app end to end.
 
-In System Settings → Keyboard, set **Press fn key to** → **Do Nothing**. Otherwise macOS starts its own dictation or the emoji picker every time you press `fn`.
+How it fits together: `hotkey.rs` listens for the key with a Core Graphics event tap, `audio.rs` records with cpal, `stt.rs` runs whisper.cpp (Metal), `llm.rs` talks to Groq or Ollama, `cleanup.rs` holds the offline rules, `paste.rs` pastes and restores the clipboard, `pipeline.rs` ties one dictation together.
 
-## How it works
+## Contributing
 
-```
-fn down → record (cpal) → fn up → Whisper (local) → snippets + dictionary
-       → offline cleanup → optional Groq / Ollama → paste with ⌘V → restore clipboard
-```
-
-- `src-tauri/src/hotkey.rs` listens for `fn` with a Core Graphics event tap.
-- `src-tauri/src/pipeline.rs` is the state machine for one dictation.
-- `src-tauri/src/cleanup.rs` holds the offline text rules (unit tested).
-- `src-tauri/src/paste.rs` saves every pasteboard type, pastes, then restores it.
-- Data is stored in SQLite in `~/Library/Application Support/dev.abdallah.quietkey/`. The Groq key is kept in the macOS Keychain.
-
-## Tests
-
-```bash
-cd src-tauri && cargo test --lib
-```
-
-`scripts/e2e/run.sh` drives the running app end to end: it simulates the `fn` key, replays a recorded sentence instead of the microphone, and checks the text that lands in TextEdit. See the comments in the script for setup.
-
-## Status
-
-Early. Dictation, cleanup, history and setup work. Screens for dictionary, snippets, style and settings are next; their backend is done.
+Issues and pull requests are welcome. If Quietkey saves you typing, a ⭐ helps other people find it.
 
 ## License
 

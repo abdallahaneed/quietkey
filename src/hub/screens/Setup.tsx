@@ -6,6 +6,7 @@ import { api, pushToTalk, settingsUrl, shortcutText, type Permissions, type Sett
 import { Button, Notice, PageHeader, PermissionRow, TextArea } from "../../ui";
 import { MicTest } from "../parts/MicTest";
 import { ShortcutEditor } from "../parts/ShortcutEditor";
+import { SpeechEngine } from "../parts/SpeechEngine";
 import type { Nav } from "../Hub";
 
 function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
@@ -49,9 +50,13 @@ export function Setup({ nav }: { nav: Nav }) {
 
   return (
     <>
-      <PageHeader title="Set up dictation" description="Four short steps. Nothing you say leaves this Mac for transcription." />
+      <PageHeader title="Set up dictation" description="Five short steps, about two minutes." />
 
-      <Step n={1} title="Allow access">
+      <Step n={1} title="Choose how speech becomes text">
+        {s && <SpeechEngine settings={s} onSaved={setS} />}
+      </Step>
+
+      <Step n={2} title="Allow access">
         <div className="flex flex-col gap-3">
           <PermissionRow
             title="Listen for your shortcut"
@@ -82,24 +87,24 @@ export function Setup({ nav }: { nav: Nav }) {
           {hotkeyError && <Notice tone="error">Could not start: {hotkeyError}</Notice>}
           {p?.fn_key_conflict && pushToTalk(s).includes("Fn") && (
             <Notice tone="warning" action={<Button size="sm" onClick={() => openUrl(settingsUrl.keyboard)}>Open Keyboard settings</Button>}>
-              macOS also reacts to fn (dictation, emoji or input switching) and will type over your text. Set "Press fn key to" to "Do Nothing", or pick other keys in step 3.
+              macOS also reacts to fn (dictation, emoji or input switching) and will type over your text. Set "Press fn key to" to "Do Nothing", or pick other keys in step 4.
             </Notice>
           )}
         </div>
       </Step>
 
-      <Step n={2} title="Check your microphone">
+      <Step n={3} title="Check your microphone">
         <MicTest />
       </Step>
 
-      <Step n={3} title="Choose your shortcut">
+      <Step n={4} title="Choose your shortcut">
         <div className="flex items-start justify-between gap-6 rounded-lg bg-surface p-4">
           <p className="text-sm text-muted">Hold it to talk, let go to insert. Press it twice quickly to keep talking without holding.</p>
           {s && <ShortcutEditor settings={s} onSaved={setS} />}
         </div>
       </Step>
 
-      <Step n={4} title="Try it">
+      <Step n={5} title="Try it">
         <TextArea label={`Click here, hold ${keys} and say a sentence`} rows={3} placeholder="Your words appear here" />
       </Step>
 

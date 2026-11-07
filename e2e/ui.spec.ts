@@ -136,6 +136,21 @@ test.describe("Setup", () => {
     await open(page, "setup");
     await expect(page.getByText("Ready. Hold fn in any text field and talk.")).toBeVisible();
   });
+
+  test("step 1: pick Groq and paste a key, or stay local and see the model download", async ({ page }) => {
+    await open(page, "setup");
+    const engine = page.getByRole("radiogroup", { name: "Speech engine" });
+    await expect(engine.getByRole("radio", { name: /On this Mac/ })).toBeChecked();
+    await expect(page.getByRole("radio", { name: /Large v3 Turbo/ })).toBeVisible();
+    await engine.getByRole("radio", { name: /Groq/ }).click();
+    await expect(page.getByText("Your recordings are sent to Groq")).toBeVisible();
+    await page.getByLabel("Groq API key").fill("gsk_" + "b".repeat(40));
+    await page.getByRole("button", { name: "Save key" }).click();
+    await expect(page.getByText("Groq key saved in your Keychain. You are ready to dictate.")).toBeVisible();
+    const patches = await page.evaluate(() => (window as any).__fake.calls.filter((c: any) => c.cmd === "settings_update").map((c: any) => c.args.patch));
+    expect(patches).toContainEqual({ stt_engine: "groq" });
+    await expectNoSeriousA11yIssues(page);
+  });
 });
 
 test.describe("Navigation", () => {

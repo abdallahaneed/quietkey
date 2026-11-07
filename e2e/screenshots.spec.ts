@@ -24,7 +24,7 @@ const data = {
 };
 
 for (const theme of ["light", "dark"]) {
-  for (const [screen, height] of [["home", 680], ["dictionary", 680], ["snippets", 680], ["style", 1500], ["settings", 2300]] as const) {
+  for (const [screen, height] of [["home", 680], ["setup", 1300], ["dictionary", 680], ["snippets", 680], ["style", 1500], ["settings", 2300]] as const) {
     test(`${screen} ${theme}`, async ({ page }) => {
       await page.setViewportSize({ width: 1000, height });
       await open(page, screen, data);

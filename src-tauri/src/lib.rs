@@ -456,7 +456,8 @@ pub fn run() {
             let choice = store::model_choice(&db.lock().unwrap());
             let model = data.join("models").join(stt::model(choice.as_deref()).file);
             std::thread::Builder::new().name("pipeline".into()).spawn(move || {
-                if let Err(e) = load_model(&model) {
+                // No file yet is a fresh install: Setup offers a download or the Groq key, so no error on the bar.
+                if let Err(e) = model.exists().then(|| load_model(&model)).unwrap_or(Ok(())) {
                     let _ = handle.emit("dictation://state", pipeline::StatePayload { state: "error", message: Some(format!("{e}")) });
                 }
                 Pipeline { app: handle, db }.run(rx);
@@ -485,7 +486,8 @@ pub fn run() {
             let quit = MenuItem::with_id(app, "quit", "Quit", true, Some("CmdOrCtrl+Q"))?;
             let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
             TrayIconBuilder::new()
-                .icon(app.default_window_icon().cloned().ok_or("no icon")?)
+                // One-colour template image: macOS tints it for light and dark menu bars.
+                .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
                 .icon_as_template(true)
                 .menu(&menu)
                 .on_menu_event(|app, ev| match ev.id().as_ref() {

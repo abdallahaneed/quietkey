@@ -32,6 +32,7 @@ export type Settings = {
   storage_mode: "store" | "auto_delete_24h" | "never";
   cleanup_level: "none" | "light" | "medium";
   llm_provider: "none" | "groq" | "ollama";
+  stt_engine: "local" | "groq";
   groq_model: string;
   ollama_model: string;
   ollama_url: string;

@@ -5,7 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ShortcutEditor } from "../parts/ShortcutEditor";
 import { api, applyTheme, pushToTalk, settingsUrl, type DeleteCategory, type Mic, type Permissions, type Settings as S } from "../../lib/api";
 import { Button, Checkbox, IconButton, KeyCaps, Modal, Notice, PageHeader, RadioCards, SelectMenu, SkeletonRows, Switch, TextInput } from "../../ui";
-import { ModelPicker } from "../parts/ModelPicker";
+import { SpeechEngine } from "../parts/SpeechEngine";
 
 const LANGUAGES: [string, string][] = [
   ["en", "English"], ["de", "German"], ["ar", "Arabic"], ["fr", "French"], ["es", "Spanish"], ["tr", "Turkish"],
@@ -174,8 +174,8 @@ export function Settings() {
         </div>
       </Section>
 
-      <Section id="model" title="Speech model" description="Runs on this Mac. Bigger models hear names and accents better but use more memory.">
-        <ModelPicker />
+      <Section id="model" title="Speech" description="Bigger local models hear names and accents better but use more memory.">
+        <SpeechEngine settings={s} onSaved={setS} />
       </Section>
 
       <Section id="cleanup" title="Cleanup" description="What happens to the text between speaking and pasting.">
@@ -258,7 +258,9 @@ export function Settings() {
         </div>
       </Section>
 
-      <Section id="privacy" title="Privacy" description={s.llm_provider === "groq"
+      <Section id="privacy" title="Privacy" description={s.stt_engine === "groq"
+        ? "Your recordings are sent to Groq with your own key to be turned into text, and nowhere else. Quietkey never takes screenshots."
+        : s.llm_provider === "groq"
         ? "Your voice is transcribed on this Mac and never uploaded. With Groq on, the transcribed text of each dictation is sent to Groq for cleanup. Quietkey never takes screenshots."
         : "Your voice and text stay on this Mac. Quietkey makes no network calls for dictation and never takes screenshots."}>
         <RadioCards label="Dictation history" value={s.storage_mode} onChange={chooseStorage} options={[

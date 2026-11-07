@@ -1,5 +1,6 @@
 //! Optional LLM cleanup. Off by default. Two free providers:
-//! - Groq: free API key from console.groq.com (no card). Only the cleaned-up text is sent, never audio.
+//! - Groq: free API key from console.groq.com (no card). For cleanup only the text is sent. With the Groq speech
+//!   engine picked in Setup or Settings, the recording itself is sent to Groq's Whisper (groq_transcribe).
 //! - Ollama: a model running locally on this Mac; nothing leaves the machine.
 //! Any failure returns Err and the caller pastes the locally cleaned text instead.
 
@@ -70,6 +71,43 @@ pub fn groq(model: &str, system: &str, text: &str) -> anyhow::Result<String> {
         anyhow::bail!("Groq {}: {msg}", status.as_u16());
     }
     parse_chat(&v)
+}
+
+const GROQ_STT_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
+
+/// Speech to text on Groq's Whisper (free tier) with the user's key, for Macs that should not run a local model.
+/// `samples` are 16 kHz mono; sent as a 16-bit WAV.
+pub fn groq_transcribe(samples: &[f32], language: Option<&str>, prompt: &str) -> anyhow::Result<String> {
+    let key = key_get().ok_or_else(|| anyhow::anyhow!("add your Groq key in Settings"))?;
+    let mut wav = std::io::Cursor::new(Vec::new());
+    {
+        let spec = hound::WavSpec { channels: 1, sample_rate: 16_000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut w = hound::WavWriter::new(&mut wav, spec)?;
+        for s in samples {
+            w.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
+        }
+        w.finalize()?;
+    }
+    let file = reqwest::blocking::multipart::Part::bytes(wav.into_inner()).file_name("audio.wav").mime_str("audio/wav")?;
+    let mut form = reqwest::blocking::multipart::Form::new()
+        .part("file", file)
+        .text("model", "whisper-large-v3-turbo")
+        .text("response_format", "json")
+        .text("temperature", "0");
+    if let Some(l) = language {
+        form = form.text("language", l.to_string());
+    }
+    if !prompt.is_empty() {
+        form = form.text("prompt", prompt.to_string());
+    }
+    let resp = client()?.post(GROQ_STT_URL).bearer_auth(key).multipart(form).send()?;
+    let status = resp.status();
+    let v: Value = resp.json()?;
+    if !status.is_success() {
+        let msg = v["error"]["message"].as_str().unwrap_or("request failed");
+        anyhow::bail!("Groq {}: {msg}", status.as_u16());
+    }
+    Ok(crate::stt::clean_whisper_text(v["text"].as_str().unwrap_or_default()))
 }
 
 fn parse_chat(v: &Value) -> anyhow::Result<String> {

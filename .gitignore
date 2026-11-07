@@ -33,3 +33,6 @@ playwright-report/
 test-results/
 playwright-report/
 scripts/e2e/barcheck
+src-tauri/icons/android/
+src-tauri/icons/ios/
+assets/screens/
