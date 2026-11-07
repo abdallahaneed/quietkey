@@ -187,9 +187,12 @@ impl Machine {
                 let _ = app.emit("dictation://level", rms);
             }
         };
-        match audio::start(on_level) {
+        let mic = store::mic_choice(&self.db.lock().unwrap());
+        match audio::start(mic, on_level) {
             Ok(rec) => {
-                emit(&self.app, if mode == Mode::Hold { "recording" } else { "hands_free" }, None);
+                let state = if mode == Mode::Hold { "recording" } else { "hands_free" };
+                let note = rec.used_fallback.then(|| "Chosen microphone not found, using the default".to_string());
+                emit(&self.app, state, note);
                 Some(Active { rec, started: Instant::now(), mode, warned: false })
             }
             Err(e) => {

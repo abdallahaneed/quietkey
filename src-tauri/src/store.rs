@@ -144,6 +144,11 @@ pub fn pipeline_settings(conn: &Connection) -> rusqlite::Result<PipelineSettings
     )
 }
 
+/// The microphone the user picked, by device name. None = system default.
+pub fn mic_choice(conn: &Connection) -> Option<String> {
+    conn.query_row("select mic_id from settings where id = 1", [], |r| r.get::<_, Option<String>>(0)).ok().flatten()
+}
+
 /* Dictionary ------------------------------------------------------------------ */
 
 #[derive(Serialize, Debug, PartialEq)]

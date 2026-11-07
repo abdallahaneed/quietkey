@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State, WindowEvent};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 struct AppState {
     db: Arc<Mutex<Connection>>,
@@ -69,14 +70,29 @@ fn settings_get(state: State<AppState>) -> CmdResult<serde_json::Value> {
 }
 
 #[tauri::command]
-fn settings_update(state: State<AppState>, patch: serde_json::Map<String, serde_json::Value>) -> CmdResult<serde_json::Value> {
+fn settings_update(app: AppHandle, state: State<AppState>, patch: serde_json::Map<String, serde_json::Value>) -> CmdResult<serde_json::Value> {
     let conn = state.db.lock().unwrap();
+    // Apply OS-level settings first, so the stored value never claims something that did not happen.
+    if let Some(on) = patch.get("launch_at_login").and_then(|v| v.as_bool()) {
+        let al = app.autolaunch();
+        if on { al.enable() } else { al.disable() }.map_err(|e| format!("Could not change start at login: {e}"))?;
+    }
+    if let Some(show) = patch.get("show_bar").and_then(|v| v.as_bool()) {
+        if let Some(bar) = app.get_webview_window("bar") {
+            let _ = if show { bar.show() } else { bar.hide() };
+        }
+    }
     let out = store::settings_update(&conn, &patch)?;
     // Switching to a stricter retention mode applies right away, not at the next hourly run.
     if patch.contains_key("storage_mode") {
         let _ = store::retention_purge(&conn, out["storage_mode"].as_str().unwrap_or("store"), db::now_ms());
     }
     Ok(out)
+}
+
+#[tauri::command]
+fn mics_list() -> Vec<audio::Mic> {
+    audio::input_devices()
 }
 
 #[tauri::command]
@@ -249,6 +265,7 @@ fn show_hub(app: &AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::Builder::new().macos_launcher(MacosLauncher::LaunchAgent).build())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory); // menu bar app, no Dock icon
@@ -310,6 +327,22 @@ pub fn run() {
                 .build(app)?;
 
             place_bar(app.handle());
+            let settings = store::settings_get(&app.state::<AppState>().db.lock().unwrap()).unwrap_or_default();
+            if settings["show_bar"] == false {
+                if let Some(bar) = app.get_webview_window("bar") {
+                    let _ = bar.hide();
+                }
+            }
+            // Keep the login item in line with the setting. Release builds only: a dev build would register
+            // the debug binary as a login item.
+            #[cfg(not(debug_assertions))]
+            {
+                let al = app.autolaunch();
+                let want = settings["launch_at_login"] != false;
+                if al.is_enabled().unwrap_or(false) != want {
+                    let _ = if want { al.enable() } else { al.disable() };
+                }
+            }
             // A menu bar app must not grab focus at login; only open the Hub while setup is unfinished.
             let setup_done = store::settings_get(&app.state::<AppState>().db.lock().unwrap())
                 .map(|s| s["onboarding_done"] == true)
@@ -355,7 +388,8 @@ pub fn run() {
             llm_key_status,
             llm_key_set,
             llm_key_delete,
-            llm_test
+            llm_test,
+            mics_list
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

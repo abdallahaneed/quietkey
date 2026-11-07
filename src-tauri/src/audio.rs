@@ -11,26 +11,58 @@ pub struct Recording {
     handle: JoinHandle<()>,
     samples: Arc<Mutex<Vec<f32>>>,
     rate: u32,
+    /// The chosen microphone was not found and the system default was used instead.
+    pub used_fallback: bool,
 }
 
-/// Starts capturing from the default input device. `on_level` gets an RMS value (0..1) per audio callback.
-pub fn start(on_level: impl Fn(f32) + Send + 'static) -> anyhow::Result<Recording> {
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct Mic {
+    pub name: String,
+    pub is_default: bool,
+}
+
+fn device_name(d: &cpal::Device) -> Option<String> {
+    d.description().ok().map(|desc| desc.name().to_string())
+}
+
+/// Input devices for the microphone picker. The name is what gets stored as the choice.
+pub fn input_devices() -> Vec<Mic> {
+    let host = cpal::default_host();
+    let default = host.default_input_device().and_then(|d| device_name(&d));
+    host.input_devices()
+        .map(|it| {
+            it.filter_map(|d| device_name(&d))
+                .map(|name| Mic { is_default: Some(&name) == default.as_ref(), name })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Starts capturing from `mic` (by name) or the default input. `on_level` gets an RMS value (0..1) per callback.
+pub fn start(mic: Option<String>, on_level: impl Fn(f32) + Send + 'static) -> anyhow::Result<Recording> {
     // Test hook: with UTTER_TEST_WAV set (dev builds only), "recording" replays that file instead of the mic,
     // so the whole hotkey -> transcribe -> paste -> save loop can be tested without speaking.
     #[cfg(debug_assertions)]
     if let Ok(path) = std::env::var("UTTER_TEST_WAV") {
+        let _ = mic;
         return from_wav(&path, on_level);
     }
     let samples = Arc::new(Mutex::new(Vec::<f32>::with_capacity(16_000 * 60)));
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
-    let (ready_tx, ready_rx) = mpsc::channel::<anyhow::Result<u32>>();
+    let (ready_tx, ready_rx) = mpsc::channel::<anyhow::Result<(u32, bool)>>();
     let buf = samples.clone();
 
     let handle = std::thread::spawn(move || {
-        let run = || -> anyhow::Result<(cpal::Stream, u32)> {
-            let device = cpal::default_host()
-                .default_input_device()
-                .ok_or_else(|| anyhow::anyhow!("no_mic"))?;
+        let run = || -> anyhow::Result<(cpal::Stream, u32, bool)> {
+            let host = cpal::default_host();
+            let chosen = mic.as_ref().and_then(|want| {
+                host.input_devices().ok()?.find(|d| device_name(d).as_deref() == Some(want.as_str()))
+            });
+            let used_fallback = mic.is_some() && chosen.is_none();
+            let device = match chosen {
+                Some(d) => d,
+                None => host.default_input_device().ok_or_else(|| anyhow::anyhow!("no_mic"))?,
+            };
             let config = device.default_input_config()?;
             let channels = config.channels() as usize;
             let rate = config.sample_rate();
@@ -59,11 +91,11 @@ pub fn start(on_level: impl Fn(f32) + Send + 'static) -> anyhow::Result<Recordin
                 other => anyhow::bail!("unsupported sample format {other:?}"),
             };
             stream.play()?;
-            Ok((stream, rate))
+            Ok((stream, rate, used_fallback))
         };
         match run() {
-            Ok((stream, rate)) => {
-                let _ = ready_tx.send(Ok(rate));
+            Ok((stream, rate, used_fallback)) => {
+                let _ = ready_tx.send(Ok((rate, used_fallback)));
                 let _ = stop_rx.recv(); // block until stop() or the Recording is dropped
                 drop(stream);
             }
@@ -74,10 +106,10 @@ pub fn start(on_level: impl Fn(f32) + Send + 'static) -> anyhow::Result<Recordin
     });
 
     // Give slow Bluetooth and USB interfaces up to 8 s to open.
-    let rate = ready_rx
+    let (rate, used_fallback) = ready_rx
         .recv_timeout(std::time::Duration::from_secs(8))
         .map_err(|_| anyhow::anyhow!("mic_timeout"))??;
-    Ok(Recording { stop_tx, handle, samples, rate })
+    Ok(Recording { stop_tx, handle, samples, rate, used_fallback })
 }
 
 #[cfg(debug_assertions)]
@@ -95,7 +127,7 @@ fn from_wav(path: &str, on_level: impl Fn(f32) + Send + 'static) -> anyhow::Resu
     let handle = std::thread::spawn(move || {
         let _ = stop_rx.recv();
     });
-    Ok(Recording { stop_tx, handle, samples: Arc::new(Mutex::new(mono)), rate: spec.sample_rate })
+    Ok(Recording { stop_tx, handle, samples: Arc::new(Mutex::new(mono)), rate: spec.sample_rate, used_fallback: false })
 }
 
 impl Recording {
@@ -188,5 +220,17 @@ mod speech_gate_tests {
             a[i] = (i as f32 * 2.0 * std::f32::consts::PI * 200.0 / 16_000.0).sin() * 0.03;
         }
         assert!(has_speech(&a));
+    }
+}
+
+#[cfg(test)]
+mod device_tests {
+    /// Lists real input devices. Run: cargo test --lib list_inputs -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn list_inputs() {
+        for m in super::input_devices() {
+            println!("{}{}", m.name, if m.is_default { "  (default)" } else { "" });
+        }
     }
 }
