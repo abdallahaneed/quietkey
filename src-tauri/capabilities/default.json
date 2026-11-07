@@ -14,6 +14,9 @@
       "allow": [
         {
           "url": "x-apple.systempreferences:*"
+        },
+        {
+          "url": "https://console.groq.com/*"
         }
       ]
     }

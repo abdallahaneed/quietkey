@@ -7,7 +7,9 @@ import { Setup } from "./screens/Setup";
 import { Design } from "./screens/Design";
 import { Dictionary } from "./screens/Dictionary";
 import { Snippets } from "./screens/Snippets";
-import { Insights, Settings, Style } from "./screens/Stubs";
+import { Settings } from "./screens/Settings";
+import { Insights, Style } from "./screens/Stubs";
+import { api, applyTheme } from "../lib/api";
 
 export type Route = "home" | "dictionary" | "snippets" | "style" | "insights" | "settings" | "setup" | "design";
 export type Nav = (r: Route) => void;
@@ -33,6 +35,8 @@ const SCREENS: Record<Route, ComponentType<{ nav: Nav }>> = {
 export function Hub() {
   const [route, setRoute] = useState<Route>(() => (location.hash.slice(1) as Route) in SCREENS ? (location.hash.slice(1) as Route) : "home");
   useEffect(() => { history.replaceState(null, "", `#${route}`); }, [route]);
+  // The saved theme; "system" follows macOS through the CSS media query.
+  useEffect(() => { api.settings().then((st) => applyTheme(st.theme)).catch(() => {}); }, []);
   // Cmd+, opens Settings, like every Mac app.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.metaKey && e.key === ",") { e.preventDefault(); setRoute("settings"); } };

@@ -1,5 +1,5 @@
 // Screens that are routed but not built yet. Their backend commands already exist (see lib/api.ts).
-import { BarChart3, Palette, Settings as SettingsIcon } from "lucide-react";
+import { BarChart3, Palette } from "lucide-react";
 import type { ReactNode } from "react";
 import { EmptyState, PageHeader } from "../../ui";
 
@@ -17,7 +17,4 @@ export const Style = () => (
 );
 export const Insights = () => (
   <Stub title="Insights" description="How much you dictate and how fast." icon={<BarChart3 className="size-8" />} />
-);
-export const Settings = () => (
-  <Stub title="Settings" description="Shortcuts, microphone, languages, privacy." icon={<SettingsIcon className="size-8" />} />
 );
