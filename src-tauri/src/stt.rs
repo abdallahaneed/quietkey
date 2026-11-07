@@ -185,6 +185,33 @@ mod lang_bench {
 }
 
 #[cfg(test)]
+mod mixed_bench {
+    /// English with German words inside, per language mode, with and without the words in the dictionary prompt.
+    /// Run: UTTER_MIX_DIR=/dir/with/wavs cargo test --release --lib mixed_bench -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn english_with_german_words() {
+        let dir = std::path::PathBuf::from(std::env::var("UTTER_MIX_DIR").unwrap());
+        let home = std::env::var("HOME").unwrap();
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.utter/models").join(super::MODEL_FILE);
+        let mut stt = super::Stt::load(&model).unwrap();
+        let picked = ["en".to_string(), "de".to_string()];
+        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wav")).collect();
+        files.sort();
+        for f in files {
+            let mut r = hound::WavReader::open(&f).unwrap();
+            let a: Vec<f32> = r.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
+            println!("== {}", f.file_name().unwrap().to_string_lossy());
+            println!("  en only     : {}", stt.transcribe(&a, Some("en"), "").unwrap());
+            println!("  auto        : {}", stt.transcribe(&a, None, "").unwrap());
+            println!("  en+de picked: {}", stt.transcribe_among(&a, &picked, "").unwrap().0);
+            let dict = "Kinderwagen, Hauptbahnhof, Brötchen, Geschäftsführer";
+            println!("  en + dict   : {}", stt.transcribe(&a, Some("en"), dict).unwrap());
+        }
+    }
+}
+
+#[cfg(test)]
 mod ctx_bench {
     /// Quality and speed per encoder window, long clip first (reproduces the suite order).
     /// Run: UTTER_FIXTURES=../scripts/e2e/fixtures cargo test --release --lib ctx_bench -- --ignored --nocapture
