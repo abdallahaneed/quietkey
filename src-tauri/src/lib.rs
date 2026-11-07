@@ -39,9 +39,9 @@ fn transcripts_list(state: State<AppState>, before: Option<i64>, limit: Option<u
 }
 
 #[tauri::command]
-fn transcript_copy(state: State<AppState>, id: String) -> CmdResult<()> {
+fn transcript_copy(state: State<AppState>, id: String, raw: Option<bool>) -> CmdResult<()> {
     let t = db::get_transcript(&state.db.lock().unwrap(), &id).map_err(err)?;
-    paste::set_clipboard_text(&t.final_text);
+    paste::set_clipboard_text(if raw == Some(true) { &t.raw_text } else { &t.final_text });
     Ok(())
 }
 
@@ -243,6 +243,7 @@ struct Permissions {
     hotkey_running: bool,
     fn_key_conflict: bool,
     microphone: &'static str,
+    other_dictation_apps: Vec<String>,
 }
 
 #[tauri::command]
@@ -253,6 +254,7 @@ fn permissions_status(state: State<AppState>) -> Permissions {
         hotkey_running: state.tap_running.load(Ordering::SeqCst),
         fn_key_conflict: hotkey::fn_key_conflict(),
         microphone: audio::mic_permission(),
+        other_dictation_apps: hotkey::other_dictation_apps(paste::running_app_names()),
     }
 }
 

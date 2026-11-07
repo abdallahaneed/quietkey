@@ -303,6 +303,7 @@ impl Worker {
                         Some("accessibility"),
                         Some("Copied. Allow Accessibility so text can be typed for you".into()),
                     ),
+                    PasteResult::Failed("clipboard_write") => ("paste_failed", Some("clipboard_write"), Some("Could not use the clipboard. Press ⌃⌘V to try again".into())),
                     PasteResult::Failed(e) => ("paste_failed", Some(e), Some("Copied. Press ⌘V to paste".into())),
                 };
                 self.save(&out, duration_ms, &front, status, err);
@@ -347,6 +348,7 @@ impl Worker {
         let corrected = cleanup::apply_corrections(&with_ph, &fixes);
         let mut text = if cfg.cleanup_level == "none" { corrected.clone() } else { cleanup::local_cleanup(&corrected) };
         let mut notice = None;
+        let mut llm_used = false;
 
         if cfg.cleanup_level != "none" && cfg.llm_provider != "none" && text.split_whitespace().count() >= 4 {
             let system = cleanup::llm_system_prompt(&cfg.cleanup_level, &tone, &words);
@@ -357,13 +359,19 @@ impl Worker {
             };
             match res {
                 // Placeholders must survive, and the output must look like an edit, not an answer.
-                Ok(out) if (0..expansions.len()).all(|i| out.contains(&format!("⟦S{}⟧", i + 1))) && llm::plausible_edit(&text, &out) => text = out,
+                Ok(out) if (0..expansions.len()).all(|i| out.contains(&format!("⟦S{}⟧", i + 1))) && llm::plausible_edit(&text, &out) => {
+                    text = out;
+                    llm_used = true;
+                }
                 Ok(_) => notice = Some("AI cleanup skipped: result did not match what you said".into()),
                 Err(e) => {
                     eprintln!("llm cleanup failed: {e}");
                     notice = Some("AI cleanup unavailable, used basic cleanup".into());
                 }
             }
+        }
+        if cfg.cleanup_level != "none" && !llm_used {
+            text = cleanup::local_tone(&text, &tone);
         }
         let final_text = cleanup::expand_placeholders(&text, &expansions);
         let fixes = cleanup::fixes_count(&raw, &final_text);

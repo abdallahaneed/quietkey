@@ -20,6 +20,7 @@ export function Home({ nav }: { nav: Nav }) {
   const [error, setError] = useState<string | null>(null);
   const [perm, setPerm] = useState<Permissions | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [showRaw, setShowRaw] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<Transcript | null>(null);
   const [keys, setKeys] = useState<string[]>(["Fn"]);
   useEffect(() => { api.settings().then((s) => setKeys(pushToTalk(s))).catch(() => {}); }, []);
@@ -56,8 +57,12 @@ export function Home({ nav }: { nav: Nav }) {
     return (rows ?? []).filter((t) => t.created_at >= since && t.status !== "cancelled").reduce((n, t) => n + t.word_count, 0);
   }, [rows]);
 
-  const copy = async (t: Transcript) => {
-    await api.transcriptCopy(t.id);
+  const toggleRaw = (id: string) => setShowRaw((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  // Cleanup changed something worth showing (not just spacing or a capital letter).
+  const edited = (t: Transcript) => t.raw_text.trim().toLowerCase() !== t.final_text.trim().toLowerCase();
+
+  const copy = async (t: Transcript, raw = false) => {
+    await api.transcriptCopy(t.id, raw);
     setCopied(t.id);
     setTimeout(() => setCopied(null), 1500);
   };
@@ -96,10 +101,20 @@ export function Home({ nav }: { nav: Nav }) {
                 <span className="w-16 shrink-0 pt-0.5 text-xs text-muted">{time(t.created_at)}</span>
                 <div className="min-w-0 flex-1">
                   <p className="line-clamp-3 select-text text-base">{t.final_text}</p>
+                  {showRaw.has(t.id) && (
+                    <p className="mt-1 select-text border-l-2 border-border pl-2 text-sm text-muted">
+                      <span className="sr-only">What you said: </span>{t.raw_text}
+                    </p>
+                  )}
                   <p className="mt-1 flex gap-2 text-xs text-muted">
                     {t.app_name && <span>{t.app_name}</span>}
                     {t.status === "paste_failed" && <span className="text-warning">Not inserted, copied instead</span>}
                     <span>{t.word_count} words</span>
+                    {edited(t) && (
+                      <button type="button" className="underline hover:text-fg" aria-expanded={showRaw.has(t.id)} onClick={() => toggleRaw(t.id)}>
+                        {showRaw.has(t.id) ? "Hide what you said" : "Show what you said"}
+                      </button>
+                    )}
                   </p>
                 </div>
                 <div className={cx("flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100")}>
@@ -108,7 +123,7 @@ export function Home({ nav }: { nav: Nav }) {
                     trigger={<IconButton label="More"><MoreHorizontal className="size-4" /></IconButton>}
                     items={[
                       { label: "Copy", onSelect: () => copy(t) },
-                      // TODO: retry and undo cleanup need the audio kept for a while
+                      ...(edited(t) ? [{ label: "Copy what you said", onSelect: () => copy(t, true) }] : []),
                       { label: "Delete", onSelect: () => setConfirmDelete(t), danger: true },
                     ]}
                   />

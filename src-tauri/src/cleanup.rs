@@ -71,10 +71,19 @@ pub fn apply_corrections(text: &str, fixes: &[Correction]) -> String {
 
 static FILLERS: LazyLock<Regex> =
     LazyLock::new(|| RegexBuilder::new(r"(^|[\s,])(?:um+|uh+|erm+|uhm+|hmm+|ah+)\b[,.]?").case_insensitive(true).build().unwrap());
-// "<number or time>, actually <number or time>" -> keep the second.
+// "<number, time or day>, actually <same kind>" -> keep the second. Only like-for-like swaps, so a stray
+// "actually" in normal speech is never treated as a correction.
+const CUE: &str = r"(?:actually|no wait|wait no|no|sorry|i mean),?";
 static BACKTRACK_NUM: LazyLock<Regex> = LazyLock::new(|| {
     let num = r"\d+(?:[:.]\d+)?(?:\s?[ap]\.?m\.?)?";
-    RegexBuilder::new(&format!(r"\b({num})[,.]?\s+(?:actually|no|sorry|i mean),?\s+({num})"))
+    RegexBuilder::new(&format!(r"\b({num})[,.]?\s+{CUE}\s+({num})"))
+        .case_insensitive(true)
+        .build()
+        .unwrap()
+});
+static BACKTRACK_DAY: LazyLock<Regex> = LazyLock::new(|| {
+    let day = r"(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)";
+    RegexBuilder::new(&format!(r"\b({day})[,.]?\s+{CUE}\s+({day})\b"))
         .case_insensitive(true)
         .build()
         .unwrap()
@@ -92,6 +101,7 @@ pub fn local_cleanup(text: &str) -> String {
     let mut s = FILLERS.replace_all(text, "$1").into_owned();
     s = collapse_repeats(&s);
     s = BACKTRACK_NUM.replace_all(&s, "$2").into_owned();
+    s = BACKTRACK_DAY.replace_all(&s, "$2").into_owned();
     s = SCRATCH.replace_all(&s, "$1").into_owned();
     s = NEW_PARA.replace_all(&s, "\n\n").into_owned();
     s = NEW_LINE.replace_all(&s, "\n").into_owned();
@@ -143,6 +153,31 @@ pub fn fixes_count(raw: &str, cleaned: &str) -> i64 {
     (a - b).abs()
 }
 
+/// The part of a tone that works without an LLM: the final period, and the first capital for texting.
+pub fn local_tone(text: &str, tone: &str) -> String {
+    if !matches!(tone, "casual" | "very_casual") {
+        return text.to_string();
+    }
+    let mut out = text.to_string();
+    // A lone final period goes; "...", "?" and abbreviations like "p.m." stay.
+    let b = out.as_bytes();
+    let n = b.len();
+    if n >= 2 && b[n - 1] == b'.' && b[n - 2] != b'.' && !(n >= 3 && b[n - 3] == b'.') {
+        out.pop();
+    }
+    if tone == "very_casual" {
+        let keep = out.starts_with("I ") || out.starts_with("I'") || out == "I";
+        let mut cs = out.chars();
+        if let (false, Some(first)) = (keep, cs.next()) {
+            // Leave acronyms like "NASA" alone.
+            if !cs.next().is_some_and(char::is_uppercase) {
+                out = first.to_lowercase().chain(out.chars().skip(1)).collect();
+            }
+        }
+    }
+    out
+}
+
 pub fn tone_instruction(tone: &str) -> &'static str {
     match tone {
         "casual" => "Relaxed: normal capitalisation, light punctuation, no period at the very end of a short message.",
@@ -188,6 +223,25 @@ mod tests {
         assert_eq!(local_cleanup("Ahmed said humble things"), "Ahmed said humble things");
         // "actually" without numbers is left for the LLM, not guessed at
         assert_eq!(local_cleanup("I actually like it."), "I actually like it.");
+        assert_eq!(local_cleanup("Let's do Monday, no wait, Tuesday at 4."), "Let's do Tuesday at 4.");
+        assert_eq!(local_cleanup("Ship it tomorrow. Actually today."), "Ship it today.");
+        assert_eq!(local_cleanup("Back on March 3, sorry 4."), "Back on March 4.");
+        // a different kind of word after the cue is not a correction
+        assert_eq!(local_cleanup("Monday, actually, works for me."), "Monday, actually, works for me.");
+    }
+
+    #[test]
+    fn tone_without_llm() {
+        assert_eq!(local_tone("See you at 7.", "formal"), "See you at 7.");
+        assert_eq!(local_tone("See you at 7.", "excited"), "See you at 7.");
+        assert_eq!(local_tone("See you at 7.", "casual"), "See you at 7");
+        assert_eq!(local_tone("See you at 7.", "very_casual"), "see you at 7");
+        assert_eq!(local_tone("I think so.", "very_casual"), "I think so");
+        assert_eq!(local_tone("NASA called.", "very_casual"), "NASA called");
+        assert_eq!(local_tone("Meet at 6 p.m.", "casual"), "Meet at 6 p.m.");
+        assert_eq!(local_tone("Wait...", "casual"), "Wait...");
+        assert_eq!(local_tone("Really?", "very_casual"), "really?");
+        assert_eq!(local_tone("", "very_casual"), "");
     }
 
     #[test]

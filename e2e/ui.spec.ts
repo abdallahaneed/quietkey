@@ -43,6 +43,19 @@ test.describe("Home", () => {
     expect(calls).toContain("transcript_copy");
   });
 
+  test("shows and copies what you said before cleanup", async ({ page }) => {
+    const t = sampleTranscript();
+    await open(page, "home", { transcripts: [t, sampleTranscript({ id: "same", raw_text: "Same text", final_text: "Same text" })] });
+    await expect(page.getByRole("button", { name: "Show what you said" })).toHaveCount(1); // not for unchanged text
+    await page.getByRole("button", { name: "Show what you said" }).click();
+    await expect(page.getByText("um so the meeting is at 6")).toBeVisible();
+    await page.getByText(t.final_text).hover();
+    await page.getByRole("button", { name: "More" }).first().click();
+    await page.getByRole("menuitem", { name: "Copy what you said" }).click();
+    const args = await page.evaluate(() => (window as any).__fake.calls.filter((c: any) => c.cmd === "transcript_copy").map((c: any) => c.args));
+    expect(args).toEqual([{ id: t.id, raw: true }]);
+  });
+
   test("delete a dictation from the menu, after confirming", async ({ page }) => {
     const t = sampleTranscript({ final_text: "Delete me please" });
     await open(page, "home", { transcripts: [t, sampleTranscript({ final_text: "Keep me" })] });
@@ -122,7 +135,7 @@ test.describe("Navigation", () => {
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   });
 
-  for (const screen of ["style", "insights"]) {
+  for (const screen of ["insights"]) {
     test(`${screen} placeholder renders without errors`, async ({ page }) => {
       await open(page, screen);
       await expect(page.getByText("Coming soon")).toBeVisible();

@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ShortcutEditor } from "../parts/ShortcutEditor";
-import { api, applyTheme, pushToTalk, type DeleteCategory, type Mic, type Settings as S } from "../../lib/api";
+import { api, applyTheme, pushToTalk, settingsUrl, type DeleteCategory, type Mic, type Permissions, type Settings as S } from "../../lib/api";
 import { Button, Checkbox, IconButton, KeyCaps, Modal, Notice, PageHeader, RadioCards, SelectMenu, SkeletonRows, Switch, TextInput } from "../../ui";
 
 const LANGUAGES: [string, string][] = [
@@ -43,6 +43,7 @@ export function Settings() {
   const [s, setS] = useState<S | null>(null);
   const [mics, setMics] = useState<Mic[]>([]);
   const [keySaved, setKeySaved] = useState(false);
+  const [perm, setPerm] = useState<Permissions | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [groqKey, setGroqKey] = useState("");
@@ -62,7 +63,7 @@ export function Settings() {
       setLoadError(String(e));
     }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api.permissions().then(setPerm).catch(() => {}); }, []);
 
   /** Optimistic update; the backend validates and the old value comes back if it refuses. */
   const update = async (patch: Partial<S>) => {
@@ -230,6 +231,16 @@ export function Settings() {
         <Row label="Hold to dictate" hint="Modifier keys only, so nothing gets typed while you hold them.">
           <ShortcutEditor settings={s} onSaved={setS} />
         </Row>
+        {perm?.fn_key_conflict && pushToTalk(s).includes("Fn") && (
+          <Notice tone="warning" action={<Button size="sm" onClick={() => openUrl(settingsUrl.keyboard)}>Open Keyboard settings</Button>}>
+            macOS also uses fn for dictation, emoji or switching input. Set "Press fn key to" to "Do Nothing", or pick other keys.
+          </Notice>
+        )}
+        {perm && perm.other_dictation_apps.length > 0 && (
+          <Notice tone="warning">
+            {perm.other_dictation_apps.join(" and ")} {perm.other_dictation_apps.length === 1 ? "is" : "are"} running. If {perm.other_dictation_apps.length === 1 ? "it listens" : "they listen"} for the same keys, both apps will record and paste. Change the keys in one of them, or quit it.
+          </Notice>
+        )}
         {([["Hands-free on / off", [...pushToTalk(s), "Space"]], ["Cancel", ["Escape"]], ["Paste last dictation again", ["Ctrl", "Cmd", "V"]], ["Copy last dictation", ["Ctrl", "Cmd", "C"]]] as [string, string[]][]).map(([label, keys]) => (
           <Row key={label} label={label}><KeyCaps keys={keys} /></Row>
         ))}
@@ -242,7 +253,9 @@ export function Settings() {
         </div>
       </Section>
 
-      <Section id="privacy" title="Privacy" description="Everything is stored on this Mac only.">
+      <Section id="privacy" title="Privacy" description={s.llm_provider === "groq"
+        ? "Your voice is transcribed on this Mac and never uploaded. With Groq on, the transcribed text of each dictation is sent to Groq for cleanup. Utter never takes screenshots."
+        : "Your voice and text stay on this Mac. Utter makes no network calls for dictation and never takes screenshots."}>
         <RadioCards label="Dictation history" value={s.storage_mode} onChange={chooseStorage} options={[
           { value: "store", title: "Keep history", body: "Your dictations stay on this Mac until you delete them." },
           { value: "auto_delete_24h", title: "Delete after 24 hours", body: "Each dictation is removed a day after you make it." },

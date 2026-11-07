@@ -60,6 +60,21 @@ pub fn fn_key_conflict() -> bool {
         .unwrap_or(false) // key missing = system default, which on recent macOS is "Do Nothing" or emoji; do not nag
 }
 
+/// Other push-to-talk dictation apps, by the name they show in the Dock. Two apps listening for the same keys
+/// both record and both paste.
+const OTHER_DICTATION_APPS: &[&str] = &["wispr flow", "superwhisper", "macwhisper", "voiceink", "aqua voice", "willow"];
+
+/// Names of running apps that likely listen for a dictation shortcut too.
+pub fn other_dictation_apps(running: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut out: Vec<String> = running
+        .into_iter()
+        .filter(|n| OTHER_DICTATION_APPS.iter().any(|o| n.to_lowercase().starts_with(o)))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 static TAP_PORT: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// The push-to-talk keys as a mask of modifier flag bits. Fn by default.
@@ -217,6 +232,14 @@ pub fn spawn(on_event: impl Fn(HotkeyEvent) + Send + 'static) -> anyhow::Result<
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn finds_other_dictation_apps() {
+        let running = ["Finder", "Wispr Flow", "superwhisper", "Flow", "Safari", "Wispr Flow"].map(String::from);
+        assert_eq!(other_dictation_apps(running), vec!["Wispr Flow".to_string(), "superwhisper".to_string()]);
+        assert!(other_dictation_apps(Vec::<String>::new()).is_empty());
+    }
+
     use super::*;
 
     fn f(bits: u64) -> CGEventFlags {
