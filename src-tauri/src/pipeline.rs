@@ -78,7 +78,7 @@ impl Pipeline {
         let ready = self.stt.is_some();
         let worker = Worker { app: self.app.clone(), db: self.db.clone(), stt: self.stt };
         if std::thread::Builder::new().name("dictation-worker".into()).spawn(move || worker.run(job_rx)).is_err() {
-            emit(&self.app, "error", Some("Could not start the dictation worker".into()));
+            emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Utter".into()));
             return;
         }
         Machine { app: self.app, db: self.db, jobs, ready, last_tap: None, cancelled: None }.run(rx);
@@ -118,7 +118,7 @@ impl Machine {
                     continue;
                 } else if el >= WARN_AT && !a.warned {
                     a.warned = true;
-                    emit(&self.app, "warning", Some("One minute left in this session".into()));
+                    emit(&self.app, "warning", Some("One minute left. Recording stops at 20 minutes".into()));
                 }
             }
 
@@ -136,10 +136,10 @@ impl Machine {
                         Some((job, at)) if at.elapsed() <= UNDO_FOR => {
                             emit(&self.app, "processing", None);
                             if self.jobs.send(job).is_err() {
-                                emit(&self.app, "error", Some("Dictation worker stopped".into()));
+                                emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Utter".into()));
                             }
                         }
-                        _ => emit(&self.app, "error", Some("Too late to undo".into())),
+                        _ => emit(&self.app, "error", Some("Too late to bring that back".into())),
                     }
                     None
                 }
@@ -199,7 +199,7 @@ impl Machine {
         match last {
             Some(t) => {
                 if paste::paste_text(&t) != PasteResult::Pasted {
-                    emit(&self.app, "error", Some("Copied. Press ⌘V to paste".into()));
+                    emit(&self.app, "error", Some("It's on your clipboard. Press ⌘V".into()));
                 }
             }
             None => emit(&self.app, "error", Some("Nothing dictated yet".into())),
@@ -208,7 +208,7 @@ impl Machine {
 
     fn start(&self, mode: Mode) -> Option<Active> {
         if !self.ready {
-            emit(&self.app, "error", Some("Speech model not loaded".into()));
+            emit(&self.app, "error", Some("Speech model isn't ready. Quit and reopen Utter".into()));
             return None;
         }
         let app = self.app.clone();
@@ -247,7 +247,7 @@ impl Machine {
         emit(&self.app, "processing", None);
         let (samples, duration_ms) = a.rec.stop();
         if self.jobs.send(Job { samples, duration_ms, front, refocus }).is_err() {
-            emit(&self.app, "error", Some("Dictation worker stopped".into()));
+            emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Utter".into()));
         }
     }
 }
@@ -274,11 +274,11 @@ impl Worker {
     fn handle(&mut self, job: Job) {
         let Job { samples, duration_ms, front, refocus } = job;
         if !audio::has_speech(&samples) {
-            emit(&self.app, "error", Some("No speech heard".into()));
+            emit(&self.app, "error", Some("Didn't hear anything".into()));
             return;
         }
         match self.process(&samples, front.bundle_id.as_deref()) {
-            Ok(out) if out.final_text.is_empty() => emit(&self.app, "error", Some("No speech heard".into())),
+            Ok(out) if out.final_text.is_empty() => emit(&self.app, "error", Some("Didn't hear anything".into())),
             Ok(out) => {
                 // Only refuse when macOS clearly reports a focused element that cannot take text (e.g. Finder).
                 let accepts = paste::focused_accepts_text(front.pid);
@@ -286,7 +286,7 @@ impl Worker {
                 eprintln!("[focus] {:?} pid={:?} accepts_text={accepts:?}", front.name, front.pid);
                 if accepts == Some(false) {
                     self.save(&out, duration_ms, &front, "paste_failed", Some("no_text_field"));
-                    emit(&self.app, "error", Some("No text field selected. Click one, then press ⌃⌘V".into()));
+                    emit(&self.app, "error", Some("No text field here. Click one, then press ⌃⌘V".into()));
                     return;
                 }
                 if refocus {
@@ -304,7 +304,7 @@ impl Worker {
                         Some("Copied. Allow Accessibility so text can be typed for you".into()),
                     ),
                     PasteResult::Failed("clipboard_write") => ("paste_failed", Some("clipboard_write"), Some("Could not use the clipboard. Press ⌃⌘V to try again".into())),
-                    PasteResult::Failed(e) => ("paste_failed", Some(e), Some("Copied. Press ⌘V to paste".into())),
+                    PasteResult::Failed(e) => ("paste_failed", Some(e), Some("It's on your clipboard. Press ⌘V".into())),
                 };
                 self.save(&out, duration_ms, &front, status, err);
                 match (status, msg) {
@@ -313,7 +313,7 @@ impl Worker {
                     (_, m) => emit(&self.app, "error", m),
                 }
             }
-            Err(e) => emit(&self.app, "error", Some(format!("Transcription failed: {e}"))),
+            Err(e) => emit(&self.app, "error", Some(format!("Couldn't transcribe that: {e}"))),
         }
     }
 
@@ -363,10 +363,10 @@ impl Worker {
                     text = out;
                     llm_used = true;
                 }
-                Ok(_) => notice = Some("AI cleanup skipped: result did not match what you said".into()),
+                Ok(_) => notice = Some("AI cleanup changed too much, so basic cleanup was used".into()),
                 Err(e) => {
                     eprintln!("llm cleanup failed: {e}");
-                    notice = Some("AI cleanup unavailable, used basic cleanup".into());
+                    notice = Some("AI cleanup didn't answer, so basic cleanup was used".into());
                 }
             }
         }

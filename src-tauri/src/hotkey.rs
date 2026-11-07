@@ -235,8 +235,8 @@ mod tests {
 
     #[test]
     fn finds_other_dictation_apps() {
-        let running = ["Finder", "Wispr Flow", "superwhisper", "Flow", "Safari", "Wispr Flow"].map(String::from);
-        assert_eq!(other_dictation_apps(running), vec!["Wispr Flow".to_string(), "superwhisper".to_string()]);
+        let running = ["Finder", "VoiceInk", "superwhisper", "Voice", "Safari", "VoiceInk"].map(String::from);
+        assert_eq!(other_dictation_apps(running), vec!["VoiceInk".to_string(), "superwhisper".to_string()]);
         assert!(other_dictation_apps(Vec::<String>::new()).is_empty());
     }
 

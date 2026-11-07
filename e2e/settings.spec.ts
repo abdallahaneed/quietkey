@@ -121,9 +121,9 @@ test.describe("Settings", () => {
   });
 
   test("warns about fn used by macOS and other dictation apps", async ({ page }) => {
-    await open(page, "settings", { permissions: { accessibility: true, input_monitoring: true, hotkey_running: true, fn_key_conflict: true, other_dictation_apps: ["Wispr Flow"] } });
+    await open(page, "settings", { permissions: { accessibility: true, input_monitoring: true, hotkey_running: true, fn_key_conflict: true, other_dictation_apps: ["VoiceInk"] } });
     await expect(page.getByText(/macOS also uses fn/)).toBeVisible();
-    await expect(page.getByText(/Wispr Flow is running/)).toBeVisible();
+    await expect(page.getByText(/VoiceInk is running/)).toBeVisible();
   });
 
   test("no shortcut warnings when nothing conflicts", async ({ page }) => {
