@@ -1,5 +1,5 @@
 // Shared UI primitives on Radix. Colours come from the token classes only, never raw hex.
-import { forwardRef, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
+import { forwardRef, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { Dialog, DropdownMenu, RadioGroup, Select, Switch as RSwitch, Tooltip } from "radix-ui";
 import { Check, ChevronDown, Loader2, Lock } from "lucide-react";
 
@@ -91,6 +91,46 @@ export function TextInput({
       />
       {error && <p id={`${id}-err`} className="text-sm text-danger">{error}</p>}
     </div>
+  );
+}
+
+/* Text area ---------------------------------------------------------------- */
+
+export function TextArea({
+  label, error, max, value, className, ...rest
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; error?: string; max?: number }) {
+  const id = useId();
+  const len = typeof value === "string" ? value.length : 0;
+  return (
+    <div className={cx("flex flex-col gap-1", className)}>
+      <div className="flex items-baseline justify-between">
+        <label htmlFor={id} className="text-sm font-medium">{label}</label>
+        {max != null && <span className={cx("text-xs", len > max ? "text-danger" : "text-muted")}>{len}/{max}</span>}
+      </div>
+      <textarea
+        id={id}
+        value={value}
+        aria-invalid={!!error || undefined}
+        aria-describedby={error ? `${id}-err` : undefined}
+        {...rest}
+        className={cx(
+          "min-h-28 resize-y rounded-md border bg-bg px-2.5 py-2 text-base text-fg placeholder:text-muted",
+          error ? "border-danger" : "border-input focus:border-accent",
+        )}
+      />
+      {error && <p id={`${id}-err`} className="text-sm text-danger">{error}</p>}
+    </div>
+  );
+}
+
+/* Checkbox ------------------------------------------------------------------- */
+
+export function Checkbox({ label, hideLabel, checked, onChange, className }: { label: string; hideLabel?: boolean; checked: boolean; onChange: (v: boolean) => void; className?: string }) {
+  return (
+    <label className={cx("inline-flex items-center gap-2 text-base", className)}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="size-4 accent-accent" />
+      <span className={cx(hideLabel && "sr-only")}>{label}</span>
+    </label>
   );
 }
 

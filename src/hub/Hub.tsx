@@ -5,7 +5,8 @@ import { cx } from "../ui";
 import { Home } from "./screens/Home";
 import { Setup } from "./screens/Setup";
 import { Design } from "./screens/Design";
-import { Dictionary, Insights, Settings, Snippets, Style } from "./screens/Stubs";
+import { Dictionary } from "./screens/Dictionary";
+import { Insights, Settings, Snippets, Style } from "./screens/Stubs";
 
 export type Route = "home" | "dictionary" | "snippets" | "style" | "insights" | "settings" | "setup" | "design";
 export type Nav = (r: Route) => void;

@@ -1,30 +1,8 @@
-import { test, expect, type Page } from "@playwright/test";
-import AxeBuilder from "@axe-core/playwright";
-import { installFakeBackend, sampleTranscript, type FakeState } from "./fake-backend";
+import { test, expect } from "@playwright/test";
+import { installFakeBackend, sampleTranscript } from "./fake-backend";
+import { expectNoSeriousA11yIssues, failOnConsoleErrors, open } from "./helpers";
 
-// Every test fails on a console error or an uncaught exception.
-let errors: string[] = [];
-test.beforeEach(({ page }) => {
-  errors = [];
-  page.on("console", (m) => {
-    if (m.type() === "error" && !m.text().includes("favicon")) errors.push(m.text());
-  });
-  page.on("pageerror", (e) => errors.push(e.message));
-});
-test.afterEach(() => expect(errors, "console errors").toEqual([]));
-
-async function open(page: Page, hash: string, state?: FakeState) {
-  await installFakeBackend(page, state);
-  await page.goto(`/#${hash}`);
-}
-
-async function expectNoSeriousA11yIssues(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  const serious = violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id}: ${v.help} -> ${v.nodes.map((n) => n.html.slice(0, 90)).join(" | ")}`);
-  expect(serious).toEqual([]);
-}
+failOnConsoleErrors();
 
 test.describe("Home", () => {
   test("empty state", async ({ page }) => {
@@ -128,7 +106,7 @@ test.describe("Navigation", () => {
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   });
 
-  for (const screen of ["dictionary", "snippets", "style", "insights", "settings"]) {
+  for (const screen of ["snippets", "style", "insights", "settings"]) {
     test(`${screen} placeholder renders without errors`, async ({ page }) => {
       await open(page, screen);
       await expect(page.getByText("Coming soon")).toBeVisible();
