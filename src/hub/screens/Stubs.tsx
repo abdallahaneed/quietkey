@@ -1,5 +1,5 @@
 // Screens that are routed but not built yet. Their backend commands already exist (see lib/api.ts).
-import { BarChart3, Palette, Settings as SettingsIcon, TextQuote } from "lucide-react";
+import { BarChart3, Palette, Settings as SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { EmptyState, PageHeader } from "../../ui";
 
@@ -12,9 +12,6 @@ function Stub({ title, description, icon }: { title: string; description: string
   );
 }
 
-export const Snippets = () => (
-  <Stub title="Snippets" description="Say a short cue, get a longer text." icon={<TextQuote className="size-8" />} />
-);
 export const Style = () => (
   <Stub title="Style" description="How polished your text should sound, per kind of app." icon={<Palette className="size-8" />} />
 );

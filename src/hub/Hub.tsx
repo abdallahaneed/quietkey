@@ -6,7 +6,8 @@ import { Home } from "./screens/Home";
 import { Setup } from "./screens/Setup";
 import { Design } from "./screens/Design";
 import { Dictionary } from "./screens/Dictionary";
-import { Insights, Settings, Snippets, Style } from "./screens/Stubs";
+import { Snippets } from "./screens/Snippets";
+import { Insights, Settings, Style } from "./screens/Stubs";
 
 export type Route = "home" | "dictionary" | "snippets" | "style" | "insights" | "settings" | "setup" | "design";
 export type Nav = (r: Route) => void;

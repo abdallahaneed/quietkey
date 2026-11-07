@@ -106,7 +106,7 @@ test.describe("Navigation", () => {
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   });
 
-  for (const screen of ["snippets", "style", "insights", "settings"]) {
+  for (const screen of ["style", "insights", "settings"]) {
     test(`${screen} placeholder renders without errors`, async ({ page }) => {
       await open(page, screen);
       await expect(page.getByText("Coming soon")).toBeVisible();
