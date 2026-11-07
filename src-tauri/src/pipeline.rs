@@ -331,11 +331,16 @@ impl Worker {
         };
         let stt = self.stt.as_mut().ok_or_else(|| anyhow::anyhow!("model not loaded"))?;
         let t0 = Instant::now();
-        let raw = stt.transcribe(samples, cfg.language.as_deref(), &words.join(", "))?;
+        let prompt = words.join(", ");
+        let (raw, language) = if cfg.candidates.is_empty() {
+            (stt.transcribe(samples, cfg.language.as_deref(), &prompt)?, cfg.language.clone())
+        } else {
+            stt.transcribe_among(samples, &cfg.candidates, &prompt)?
+        };
         #[cfg(debug_assertions)]
         eprintln!("[timing] transcribe {:?} for {:.1}s audio", t0.elapsed(), samples.len() as f32 / 16_000.0);
         if raw.is_empty() {
-            return Ok(Processed { raw, final_text: String::new(), cleanup_level: cfg.cleanup_level, notice: None, language: cfg.language, storage_mode: cfg.storage_mode, fixes: 0 });
+            return Ok(Processed { raw, final_text: String::new(), cleanup_level: cfg.cleanup_level, notice: None, language: language.clone(), storage_mode: cfg.storage_mode, fixes: 0 });
         }
 
         let (with_ph, expansions) = cleanup::insert_placeholders(&raw, &snippets);
@@ -362,7 +367,7 @@ impl Worker {
         }
         let final_text = cleanup::expand_placeholders(&text, &expansions);
         let fixes = cleanup::fixes_count(&raw, &final_text);
-        Ok(Processed { raw, final_text, cleanup_level: cfg.cleanup_level, notice, language: cfg.language, storage_mode: cfg.storage_mode, fixes })
+        Ok(Processed { raw, final_text, cleanup_level: cfg.cleanup_level, notice, language: language.clone(), storage_mode: cfg.storage_mode, fixes })
     }
 
     fn save(&self, out: &Processed, duration_ms: i64, front: &paste::FrontApp, status: &str, err: Option<&str>) {

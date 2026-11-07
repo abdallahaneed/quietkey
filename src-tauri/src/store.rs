@@ -135,6 +135,8 @@ pub struct PipelineSettings {
     pub ollama_url: String,
     pub storage_mode: String,
     pub language: Option<String>,
+    /// Several languages picked with auto-detect off: Whisper chooses among these only.
+    pub candidates: Vec<String>,
 }
 
 pub fn pipeline_settings(conn: &Connection) -> rusqlite::Result<PipelineSettings> {
@@ -146,10 +148,11 @@ pub fn pipeline_settings(conn: &Connection) -> rusqlite::Result<PipelineSettings
             let langs: Vec<String> = serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default();
             let auto: i64 = r.get(7)?;
             // One language picked and no auto-detect: tell Whisper. Otherwise let it detect.
-            let language = if auto == 0 && langs.len() == 1 { langs.into_iter().next() } else { None };
+            let language = if auto == 0 && langs.len() == 1 { langs.first().cloned() } else { None };
+            let candidates = if auto == 0 && langs.len() > 1 { langs } else { Vec::new() };
             Ok(PipelineSettings {
                 cleanup_level: r.get(0)?, llm_provider: r.get(1)?, groq_model: r.get(2)?, ollama_model: r.get(3)?,
-                ollama_url: r.get(4)?, storage_mode: r.get(5)?, language,
+                ollama_url: r.get(4)?, storage_mode: r.get(5)?, language, candidates,
             })
         },
     )

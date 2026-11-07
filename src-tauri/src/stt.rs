@@ -25,11 +25,22 @@ impl Stt {
         self.transcribe_ctx(samples, language, prompt, None)
     }
 
+    /// Auto-detect limited to `candidates`: if Whisper hears a language outside them, transcribe again in the
+    /// first one. Returns the text and the language used. A separate detection pass would cost ~2 s every time.
+    pub fn transcribe_among(&mut self, samples: &[f32], candidates: &[String], prompt: &str) -> anyhow::Result<(String, Option<String>)> {
+        let text = self.transcribe(samples, None, prompt)?;
+        let heard = whisper_rs::get_lang_str(self.state.full_lang_id_from_state());
+        match retry_language(heard, candidates) {
+            None => Ok((text, heard.map(str::to_string))),
+            Some(l) => Ok((self.transcribe(samples, Some(l), prompt)?, Some(l.to_string()))),
+        }
+    }
+
     /// `ctx` overrides the encoder window (tests only); None picks it from the clip length.
     pub fn transcribe_ctx(&mut self, samples: &[f32], language: Option<&str>, prompt: &str, ctx: Option<i32>) -> anyhow::Result<String> {
         let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         p.set_language(language.or(Some("auto")));
-        p.set_n_threads(std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(4).min(8));
+        p.set_n_threads(threads());
         p.set_no_context(true);
         // Timestamps let Whisper keep its place in clips over ~30 s; without them it skipped whole sentences
         // (measured: 115 of 138 words kept). Costs ~0.5 s on a 40 s clip, nothing on short ones.
@@ -51,6 +62,18 @@ impl Stt {
         self.state.full(p, &audio).map_err(|e| anyhow::anyhow!("transcribe failed: {e}"))?;
         let text: String = self.state.as_iter().map(|seg| seg.to_string()).collect::<Vec<_>>().join("");
         Ok(clean_whisper_text(&text))
+    }
+}
+
+fn threads() -> i32 {
+    std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(4).min(8)
+}
+
+/// The language to transcribe again in, or None when what Whisper heard is one of the user's languages.
+fn retry_language<'a>(heard: Option<&str>, candidates: &'a [String]) -> Option<&'a str> {
+    match heard {
+        Some(h) if candidates.iter().any(|c| c == h) => None,
+        _ => candidates.first().map(String::as_str),
     }
 }
 
@@ -87,7 +110,16 @@ pub fn clean_whisper_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{audio_ctx, clean_whisper_text};
+    use super::{audio_ctx, clean_whisper_text, retry_language};
+
+    #[test]
+    fn retries_only_outside_chosen_languages() {
+        let picked = ["en".to_string(), "de".to_string()];
+        assert_eq!(retry_language(Some("de"), &picked), None);
+        assert_eq!(retry_language(Some("fr"), &picked), Some("en"));
+        assert_eq!(retry_language(None, &picked), Some("en"));
+        assert_eq!(retry_language(Some("fr"), &[]), None);
+    }
 
     #[test]
     fn audio_ctx_bounds() {
@@ -127,6 +159,28 @@ mod bench {
             println!("run {run}: {:?} for {:.1}s audio -> {text}", t1.elapsed(), samples.len() as f32 / 16000.0);
         }
         println!("model load {load:?}");
+    }
+}
+
+#[cfg(test)]
+mod lang_bench {
+    /// Run: UTTER_FIXTURES=../scripts/e2e/fixtures cargo test --release --lib lang_bench -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn detects_among_picked() {
+        let dir = std::path::PathBuf::from(std::env::var("UTTER_FIXTURES").unwrap());
+        let home = std::env::var("HOME").unwrap();
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.utter/models").join(super::MODEL_FILE);
+        let mut stt = super::Stt::load(&model).unwrap();
+        let picked = ["en".to_string(), "de".to_string()];
+        for (n, want) in [("german", "de"), ("short", "en"), ("speech", "en")] {
+            let mut r = hound::WavReader::open(dir.join(format!("{n}.wav"))).unwrap();
+            let a: Vec<f32> = r.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
+            let t = std::time::Instant::now();
+            let (text, got) = stt.transcribe_among(&a, &picked, "").unwrap();
+            println!("{n}: {got:?} in {:?}: {}", t.elapsed(), text.chars().take(50).collect::<String>());
+            assert_eq!(got.as_deref(), Some(want));
+        }
     }
 }
 
