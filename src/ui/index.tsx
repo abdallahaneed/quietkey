@@ -165,10 +165,10 @@ export function Switch({
 /* Radio cards -------------------------------------------------------------- */
 
 export function RadioCards<T extends string>({
-  label, value, onChange, options,
-}: { label: string; value: T; onChange: (v: T) => void; options: { value: T; title: string; body?: string; disabled?: boolean }[] }) {
+  label, value, onChange, options, className,
+}: { label: string; value: T; onChange: (v: T) => void; options: { value: T; title: string; body?: string; disabled?: boolean }[]; className?: string }) {
   return (
-    <RadioGroup.Root aria-label={label} value={value} onValueChange={(v) => onChange(v as T)} className="grid gap-2">
+    <RadioGroup.Root aria-label={label} value={value} onValueChange={(v) => onChange(v as T)} className={cx("grid gap-2", className)}>
       {options.map((o) => (
         <RadioGroup.Item
           key={o.value}

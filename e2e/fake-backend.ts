@@ -4,13 +4,15 @@ import type { Page } from "@playwright/test";
 
 export type FakeState = {
   transcripts?: unknown[];
-  permissions?: { accessibility: boolean; input_monitoring: boolean; hotkey_running: boolean; fn_key_conflict: boolean; microphone?: string };
+  permissions?: { accessibility: boolean; input_monitoring: boolean; hotkey_running: boolean; fn_key_conflict: boolean; microphone?: string; other_dictation_apps?: string[] };
   failList?: boolean;
   dictionary?: { id: string; word: string; misspelling: string | null; source: string; created_at: number }[];
   snippets?: { id: string; trigger: string; expansion: string; updated_at: number }[];
   settings?: Record<string, unknown>;
   mics?: { name: string; is_default: boolean }[];
   groqKeySaved?: boolean;
+  styles?: { category: string; tone: string }[];
+  failStyles?: boolean;
 };
 
 export async function installFakeBackend(page: Page, state: FakeState = {}) {
@@ -19,13 +21,14 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
     const listeners = new Map<string, number[]>();
     let nextId = 1;
     const calls: { cmd: string; args: unknown }[] = [];
-    const permissions = s.permissions ?? { accessibility: true, input_monitoring: true, hotkey_running: true, fn_key_conflict: false, microphone: "granted" };
+    const permissions = { other_dictation_apps: [], ...(s.permissions ?? { accessibility: true, input_monitoring: true, hotkey_running: true, fn_key_conflict: false, microphone: "granted" }) };
     // In-memory data with the same rules as the Rust side (lengths, case-insensitive duplicates).
     const uid = () => Math.random().toString(36).slice(2);
     const clean = (v: string | null | undefined) => (v ?? "").trim();
     const dict = [...(s.dictionary ?? [])];
     const snips = [...(s.snippets ?? [])];
     const transcripts = [...((s.transcripts as any[]) ?? [])];
+    const styles = (s.styles ?? ["personal", "work", "email", "other"].map((category) => ({ category, tone: "formal" }))).map((x) => ({ ...x }));
     const settings: Record<string, unknown> = {
       shortcuts: { push_to_talk: [["Fn"]] }, mic_id: null, languages: ["en"], auto_detect_language: false, theme: "system",
       launch_at_login: true, show_bar: true, storage_mode: "store", cleanup_level: "light", llm_provider: "none",
@@ -97,6 +100,15 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
         return [...transcripts];
       },
       permissions_status: () => permissions,
+      styles_get: () => { if (s.failStyles) throw "database is locked"; return styles.map((x) => ({ ...x })); },
+      style_set: (a: { category: string; tone: string }) => {
+        // same rules as the schema: very casual is Personal only, excited is not offered for Personal
+        if ((a.tone === "very_casual" && a.category !== "personal") || (a.tone === "excited" && a.category === "personal")) throw "That tone for this kind of app is not allowed";
+        const row = styles.find((x) => x.category === a.category);
+        if (!row) throw "Unknown app category";
+        row.tone = a.tone;
+        return null;
+      },
       transcript_copy: () => null,
       hotkey_start: () => null,
       hotkey_pause: () => null,

@@ -8,7 +8,8 @@ import { Design } from "./screens/Design";
 import { Dictionary } from "./screens/Dictionary";
 import { Snippets } from "./screens/Snippets";
 import { Settings } from "./screens/Settings";
-import { Insights, Style } from "./screens/Stubs";
+import { Insights } from "./screens/Stubs";
+import { Style } from "./screens/Style";
 import { api, applyTheme } from "../lib/api";
 
 export type Route = "home" | "dictionary" | "snippets" | "style" | "insights" | "settings" | "setup" | "design";

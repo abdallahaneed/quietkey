@@ -42,11 +42,16 @@ export type Settings = {
 export type Mic = { name: string; is_default: boolean };
 export type DictEntry = { id: string; word: string; misspelling: string | null; source: "manual" | "auto" | "import"; created_at: number };
 export type Snippet = { id: string; trigger: string; expansion: string; updated_at: number };
+export type StyleCategory = "personal" | "work" | "email" | "other";
+export type Tone = "formal" | "casual" | "very_casual" | "excited";
+export type StyleRow = { category: StyleCategory; tone: Tone };
 export type DeleteCategory = "history" | "dictionary" | "snippets" | "personalization" | "usage" | "everything";
 
 export type Permissions = {
   accessibility: boolean; input_monitoring: boolean; hotkey_running: boolean; fn_key_conflict: boolean;
   microphone: "granted" | "denied" | "undetermined" | "unknown";
+  /** Other running dictation apps that may react to the same keys. */
+  other_dictation_apps: string[];
 };
 
 /** The keys of the hold-to-dictate shortcut, e.g. ["Fn"] or ["RightCtrl", "RightOpt"]. */
@@ -60,7 +65,8 @@ export const shortcutText = (keys: string[]) => keys.map((k) => KEY_WORD[k] ?? k
 
 export const api = {
   transcriptsList: (before?: number, limit = 50) => invoke<Transcript[]>("transcripts_list", { before, limit }),
-  transcriptCopy: (id: string) => invoke<void>("transcript_copy", { id }),
+  /** `raw`: copy what Whisper heard, before cleanup. */
+  transcriptCopy: (id: string, raw = false) => invoke<void>("transcript_copy", { id, raw }),
   copyLast: () => invoke<boolean>("copy_last"),
   dictationCancel: () => invoke<void>("dictation_cancel"),
   dictationToggle: () => invoke<void>("dictation_toggle"),
@@ -87,6 +93,9 @@ export const api = {
   dictionaryUpdate: (id: string, word: string, misspelling: string | null) => invoke<void>("dictionary_update", { id, word, misspelling }),
   dictionaryDelete: (ids: string[]) => invoke<number>("dictionary_delete", { ids }),
   dictionaryImport: (content: string) => invoke<{ added: number; skipped: number }>("dictionary_import", { content }),
+
+  styles: () => invoke<StyleRow[]>("styles_get"),
+  styleSet: (category: StyleCategory, tone: Tone) => invoke<void>("style_set", { category, tone }),
 
   snippets: () => invoke<Snippet[]>("snippets_list"),
   snippetAdd: (trigger: string, expansion: string) => invoke<string>("snippets_add", { trigger, expansion }),
