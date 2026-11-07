@@ -58,7 +58,7 @@ export function Snippets() {
     <>
       <PageHeader
         title="Snippets"
-        description="Say a short cue while dictating and Utter types the full text instead."
+        description="Say a short cue while dictating and Quietkey types the full text instead."
         actions={<Button variant="primary" icon={<Plus className="size-4" />} onClick={startAdd}>Add snippet</Button>}
       />
 

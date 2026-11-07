@@ -141,15 +141,15 @@ mod tests {
 
 #[cfg(test)]
 mod bench {
-    /// Run: UTTER_TEST_WAV=/path/16k-f32.wav cargo test --release --lib bench -- --ignored --nocapture
+    /// Run: QUIETKEY_TEST_WAV=/path/16k-f32.wav cargo test --release --lib bench -- --ignored --nocapture
     #[test]
     #[ignore]
     fn transcribe_wav_timing() {
-        let wav = std::fs::read(std::env::var("UTTER_TEST_WAV").unwrap()).unwrap();
+        let wav = std::fs::read(std::env::var("QUIETKEY_TEST_WAV").unwrap()).unwrap();
         let at = wav.windows(4).position(|w| w == b"data").unwrap() + 8; // 32-bit float PCM after the data chunk header
         let samples: Vec<f32> = wav[at..].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.utter/models").join(super::MODEL_FILE);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::MODEL_FILE);
         let t0 = std::time::Instant::now();
         let mut stt = super::Stt::load(&model).unwrap();
         let load = t0.elapsed();
@@ -164,13 +164,13 @@ mod bench {
 
 #[cfg(test)]
 mod lang_bench {
-    /// Run: UTTER_FIXTURES=../scripts/e2e/fixtures cargo test --release --lib lang_bench -- --ignored --nocapture
+    /// Run: QUIETKEY_FIXTURES=../scripts/e2e/fixtures cargo test --release --lib lang_bench -- --ignored --nocapture
     #[test]
     #[ignore]
     fn detects_among_picked() {
-        let dir = std::path::PathBuf::from(std::env::var("UTTER_FIXTURES").unwrap());
+        let dir = std::path::PathBuf::from(std::env::var("QUIETKEY_FIXTURES").unwrap());
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.utter/models").join(super::MODEL_FILE);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::MODEL_FILE);
         let mut stt = super::Stt::load(&model).unwrap();
         let picked = ["en".to_string(), "de".to_string()];
         for (n, want) in [("german", "de"), ("short", "en"), ("speech", "en")] {
@@ -187,13 +187,13 @@ mod lang_bench {
 #[cfg(test)]
 mod mixed_bench {
     /// English with German words inside, per language mode, with and without the words in the dictionary prompt.
-    /// Run: UTTER_MIX_DIR=/dir/with/wavs cargo test --release --lib mixed_bench -- --ignored --nocapture
+    /// Run: QUIETKEY_MIX_DIR=/dir/with/wavs cargo test --release --lib mixed_bench -- --ignored --nocapture
     #[test]
     #[ignore]
     fn english_with_german_words() {
-        let dir = std::path::PathBuf::from(std::env::var("UTTER_MIX_DIR").unwrap());
+        let dir = std::path::PathBuf::from(std::env::var("QUIETKEY_MIX_DIR").unwrap());
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.utter/models").join(super::MODEL_FILE);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::MODEL_FILE);
         let mut stt = super::Stt::load(&model).unwrap();
         let picked = ["en".to_string(), "de".to_string()];
         let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wav")).collect();
@@ -214,21 +214,21 @@ mod mixed_bench {
 #[cfg(test)]
 mod ctx_bench {
     /// Quality and speed per encoder window, long clip first (reproduces the suite order).
-    /// Run: UTTER_FIXTURES=../scripts/e2e/fixtures cargo test --release --lib ctx_bench -- --ignored --nocapture
+    /// Run: QUIETKEY_FIXTURES=../scripts/e2e/fixtures cargo test --release --lib ctx_bench -- --ignored --nocapture
     #[test]
     #[ignore]
     fn window_sizes() {
-        let dir = std::path::PathBuf::from(std::env::var("UTTER_FIXTURES").unwrap());
+        let dir = std::path::PathBuf::from(std::env::var("QUIETKEY_FIXTURES").unwrap());
         let load = |n: &str| -> Vec<f32> {
             let mut r = hound::WavReader::open(dir.join(format!("{n}.wav"))).unwrap();
             r.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect()
         };
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.utter/models").join(super::MODEL_FILE);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::MODEL_FILE);
         let mut stt = super::Stt::load(&model).unwrap();
         for ctx in [None, Some(768), Some(1500)] {
             println!("=== ctx {:?}", ctx);
-            let names: Vec<(&str, Option<&str>)> = match std::env::var("UTTER_BENCH_ONLY") {
+            let names: Vec<(&str, Option<&str>)> = match std::env::var("QUIETKEY_BENCH_ONLY") {
                 Ok(only) => only.split(',').map(|n| (Box::leak(n.to_string().into_boxed_str()) as &str, Some("en"))).collect(),
                 Err(_) => vec![("long", Some("en")), ("short", Some("en")), ("raw", Some("en")), ("german", Some("de")), ("speech", Some("en"))],
             };

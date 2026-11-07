@@ -55,19 +55,19 @@ export function Setup({ nav }: { nav: Nav }) {
         <div className="flex flex-col gap-3">
           <PermissionRow
             title="Listen for your shortcut"
-            body="Input Monitoring lets Utter notice when you hold the dictation keys, in any app."
+            body="Input Monitoring lets Quietkey notice when you hold the dictation keys, in any app."
             granted={!!p?.input_monitoring}
             onAllow={async () => { if (!(await api.requestInputMonitoring())) await openUrl(settingsUrl.inputMonitoring); }}
           />
           <PermissionRow
             title="Type into other apps"
-            body="Accessibility lets Utter paste your words where your cursor is."
+            body="Accessibility lets Quietkey paste your words where your cursor is."
             granted={!!p?.accessibility}
             onAllow={() => openUrl(settingsUrl.accessibility)}
           />
           <PermissionRow
             title="Use the microphone"
-            body={mic === "undetermined" ? "macOS asks when you test the microphone below." : "Utter only records while you hold the shortcut."}
+            body={mic === "undetermined" ? "macOS asks when you test the microphone below." : "Quietkey only records while you hold the shortcut."}
             granted={mic === "granted"}
             onAllow={() => openUrl(settingsUrl.microphone)}
           />

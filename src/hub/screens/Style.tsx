@@ -1,4 +1,4 @@
-// Style: how dictated text should sound, per kind of app. Utter picks the kind from the app you dictate into.
+// Style: how dictated text should sound, per kind of app. Quietkey picks the kind from the app you dictate into.
 import { useEffect, useState } from "react";
 import { api, type Settings, type StyleCategory, type StyleRow, type Tone } from "../../lib/api";
 import { Button, Notice, PageHeader, RadioCards, SkeletonRows } from "../../ui";

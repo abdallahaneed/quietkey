@@ -58,10 +58,10 @@ pub fn input_devices() -> Vec<Mic> {
 
 /// Starts capturing from `mic` (by name) or the default input. `on_level` gets an RMS value (0..1) per callback.
 pub fn start(mic: Option<String>, on_level: impl Fn(f32) + Send + 'static) -> anyhow::Result<Recording> {
-    // Test hook: with UTTER_TEST_WAV set (dev builds only), "recording" replays that file instead of the mic,
+    // Test hook: with QUIETKEY_TEST_WAV set (dev builds only), "recording" replays that file instead of the mic,
     // so the whole hotkey -> transcribe -> paste -> save loop can be tested without speaking.
     #[cfg(debug_assertions)]
-    if let Ok(path) = std::env::var("UTTER_TEST_WAV") {
+    if let Ok(path) = std::env::var("QUIETKEY_TEST_WAV") {
         let _ = mic;
         return from_wav(&path, on_level);
     }

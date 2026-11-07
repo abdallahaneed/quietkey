@@ -45,8 +45,8 @@ pub fn running_app_names() -> Vec<String> {
     NSWorkspace::sharedWorkspace().runningApplications().iter().filter_map(|a| a.localizedName().map(|n| n.to_string())).collect()
 }
 
-/// Hands keyboard focus back to `pid`. A click on the bar panel does not activate Utter, but macOS still routes
-/// keys to Utter's process afterwards, so the paste would go nowhere.
+/// Hands keyboard focus back to `pid`. A click on the bar panel does not activate Quietkey, but macOS still routes
+/// keys to Quietkey's process afterwards, so the paste would go nowhere.
 pub fn give_focus(pid: Option<i32>) {
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
     let Some(app) = pid.and_then(|p| NSRunningApplication::runningApplicationWithProcessIdentifier(p)) else { return };

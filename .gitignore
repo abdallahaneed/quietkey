@@ -27,7 +27,7 @@ scripts/e2e/keys
 scripts/e2e/speech.wav
 scripts/e2e/fixtures/
 scripts/e2e/results.txt
-scripts/e2e/UtterTestTarget
+scripts/e2e/QuietkeyTestTarget
 test-results/
 playwright-report/
 test-results/

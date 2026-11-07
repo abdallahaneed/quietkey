@@ -314,12 +314,12 @@ fn make_panel(bar: &tauri::WebviewWindow) {
     let win = ptr as *mut AnyObject;
     // The panel must never become key either: a key panel takes keystrokes (like Spotlight), so the paste's ⌘V
     // would land in the bar instead of the app. Clicks still arrive because the webview accepts the first mouse.
-    let panel = AnyClass::get(c"UtterBarPanel").or_else(|| {
+    let panel = AnyClass::get(c"QuietkeyBarPanel").or_else(|| {
         use objc2::runtime::{Bool, ClassBuilder, Sel};
         extern "C-unwind" fn no(_: &AnyObject, _: Sel) -> Bool {
             Bool::NO
         }
-        let mut b = ClassBuilder::new(c"UtterBarPanel", AnyClass::get(c"NSPanel")?)?;
+        let mut b = ClassBuilder::new(c"QuietkeyBarPanel", AnyClass::get(c"NSPanel")?)?;
         unsafe {
             b.add_method(objc2::sel!(canBecomeKeyWindow), no as extern "C-unwind" fn(_, _) -> _);
             b.add_method(objc2::sel!(canBecomeMainWindow), no as extern "C-unwind" fn(_, _) -> _);
@@ -349,6 +349,17 @@ fn show_hub(app: &AppHandle) {
     }
 }
 
+/// The app was called Utter before 2026-11-07 (bundle id dev.abdallah.utter). Moves that data folder (history,
+/// settings, the downloaded model) to the new one once, so nothing is lost and the model is not downloaded again.
+fn migrate_old_data(new: &std::path::Path) {
+    let Some(old) = new.parent().map(|p| p.join("dev.abdallah.utter")) else { return };
+    if old.is_dir() && !new.exists() {
+        if let Err(e) = std::fs::rename(&old, new) {
+            eprintln!("could not move {} to {}: {e}", old.display(), new.display());
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -359,6 +370,7 @@ pub fn run() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory); // menu bar app, no Dock icon
 
             let data = app.path().app_data_dir()?;
+            migrate_old_data(&data);
             std::fs::create_dir_all(data.join("models"))?;
             let conn = db::open(&data.join("app.db"))?;
             let db = Arc::new(Mutex::new(conn));
@@ -438,7 +450,7 @@ pub fn run() {
             let setup_done = store::settings_get(&app.state::<AppState>().db.lock().unwrap())
                 .map(|s| s["onboarding_done"] == true)
                 .unwrap_or(false);
-            if !setup_done && std::env::var("UTTER_TEST_WAV").is_err() {
+            if !setup_done && std::env::var("QUIETKEY_TEST_WAV").is_err() {
                 show_hub(app.handle());
             }
             Ok(())
@@ -488,4 +500,25 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod migrate_tests {
+    #[test]
+    fn moves_old_folder_once_and_never_overwrites() {
+        let root = std::env::temp_dir().join(format!("qk-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (old, new) = (root.join("dev.abdallah.utter"), root.join("dev.abdallah.quietkey"));
+        std::fs::create_dir_all(old.join("models")).unwrap();
+        std::fs::write(old.join("app.db"), "history").unwrap();
+        super::migrate_old_data(&new);
+        assert_eq!(std::fs::read_to_string(new.join("app.db")).unwrap(), "history");
+        assert!(!old.exists());
+        // a later old folder never replaces existing data
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("app.db"), "stale").unwrap();
+        super::migrate_old_data(&new);
+        assert_eq!(std::fs::read_to_string(new.join("app.db")).unwrap(), "history");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

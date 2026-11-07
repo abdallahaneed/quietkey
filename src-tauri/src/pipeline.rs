@@ -46,7 +46,7 @@ enum Mode {
 
 struct Active {
     rec: Recording,
-    /// The app in front when recording started, in case Utter itself is in front at the end.
+    /// The app in front when recording started, in case Quietkey itself is in front at the end.
     front: paste::FrontApp,
     started: Instant,
     mode: Mode,
@@ -78,7 +78,7 @@ impl Pipeline {
         let ready = self.stt.is_some();
         let worker = Worker { app: self.app.clone(), db: self.db.clone(), stt: self.stt };
         if std::thread::Builder::new().name("dictation-worker".into()).spawn(move || worker.run(job_rx)).is_err() {
-            emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Utter".into()));
+            emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Quietkey".into()));
             return;
         }
         Machine { app: self.app, db: self.db, jobs, ready, last_tap: None, cancelled: None }.run(rx);
@@ -136,7 +136,7 @@ impl Machine {
                         Some((job, at)) if at.elapsed() <= UNDO_FOR => {
                             emit(&self.app, "processing", None);
                             if self.jobs.send(job).is_err() {
-                                emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Utter".into()));
+                                emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Quietkey".into()));
                             }
                         }
                         _ => emit(&self.app, "error", Some("Too late to bring that back".into())),
@@ -208,7 +208,7 @@ impl Machine {
 
     fn start(&self, mode: Mode) -> Option<Active> {
         if !self.ready {
-            emit(&self.app, "error", Some("Speech model isn't ready. Quit and reopen Utter".into()));
+            emit(&self.app, "error", Some("Speech model isn't ready. Quit and reopen Quietkey".into()));
             return None;
         }
         let app = self.app.clone();
@@ -247,12 +247,12 @@ impl Machine {
         emit(&self.app, "processing", None);
         let (samples, duration_ms) = a.rec.stop();
         if self.jobs.send(Job { samples, duration_ms, front, refocus }).is_err() {
-            emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Utter".into()));
+            emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Quietkey".into()));
         }
     }
 }
 
-/// The app to paste into: the one in front now, unless that is Utter itself (after a click on the bar).
+/// The app to paste into: the one in front now, unless that is Quietkey itself (after a click on the bar).
 fn target(at_start: paste::FrontApp) -> paste::FrontApp {
     let now = paste::frontmost_app();
     if now.pid == Some(std::process::id() as i32) { at_start } else { now }

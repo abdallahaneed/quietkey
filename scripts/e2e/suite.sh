@@ -1,20 +1,20 @@
 #!/bin/zsh
 # Full dictation test suite against the running app.
-# Start the app first with:  UTTER_TEST_WAV=$PWD/scripts/e2e/fixtures/current.wav npm run tauri dev
+# Start the app first with:  QUIETKEY_TEST_WAV=$PWD/scripts/e2e/fixtures/current.wav npm run tauri dev
 # The terminal needs Accessibility + Input Monitoring. Pastes into a small test window (target.swift) and Chrome.
-# Usage: UTTER_LOG=<path to the dev server log> scripts/e2e/suite.sh [case-id-filter]
-# UTTER_LOG lets "nothing was pasted" checks read the app's own paste log. Without it they fall back to
+# Usage: QUIETKEY_LOG=<path to the dev server log> scripts/e2e/suite.sh [case-id-filter]
+# QUIETKEY_LOG lets "nothing was pasted" checks read the app's own paste log. Without it they fall back to
 # checking that the document stayed empty, which macOS Dictation can break if fn is set to start it.
 setopt NULL_GLOB
 cd "${0:A:h}"
 FILTER="${1:-}"
-DB="$HOME/Library/Application Support/dev.abdallah.utter/app.db"
+DB="$HOME/Library/Application Support/dev.abdallah.quietkey/app.db"
 FX=fixtures
 K=./keys
 mkdir -p $FX
 [[ -x keys ]] || swiftc -O keys.swift -o keys
-[[ -x UtterTestTarget ]] || swiftc -O target.swift -o UtterTestTarget
-OUT=$(mktemp -t utter-target)
+[[ -x QuietkeyTestTarget ]] || swiftc -O target.swift -o QuietkeyTestTarget
+OUT=$(mktemp -t quietkey-target)
 
 # --- fixtures (generated once, not committed) ---------------------------------
 mk() { # mk <name> <voice> <text>
@@ -40,14 +40,14 @@ last() { q "select $1 from transcripts order by created_at desc, id desc limit 1
 setting() { q "update settings set $1 where id = 1"; }
 reset_settings() { setting "cleanup_level='light', llm_provider='none', storage_mode='store', languages='[\"en\"]', auto_detect_language=0"; }
 # Each case gets a fresh test window; it is killed afterwards, so nothing stays open or gets saved.
-new_doc() { pkill -x UtterTestTarget 2>/dev/null; sleep 0.3; ./UtterTestTarget "$OUT" & sleep 1.5; }
-close_docs() { pkill -x UtterTestTarget 2>/dev/null; rm -f "$OUT"; }
+new_doc() { pkill -x QuietkeyTestTarget 2>/dev/null; sleep 0.3; ./QuietkeyTestTarget "$OUT" & sleep 1.5; }
+close_docs() { pkill -x QuietkeyTestTarget 2>/dev/null; rm -f "$OUT"; }
 trap close_docs EXIT
 doc() { cat "$OUT" 2>/dev/null; }
 hold() { $K fn-down sleep:$1 fn-up; }
-pastes() { [[ -n "${UTTER_LOG:-}" ]] && grep -c '^\[paste\]' "$UTTER_LOG" || print -1; }
+pastes() { [[ -n "${QUIETKEY_LOG:-}" ]] && grep -c '^\[paste\]' "$QUIETKEY_LOG" || print -1; }
 nothing_pasted() { # nothing_pasted <paste count before>
-  if [[ -n "${UTTER_LOG:-}" ]]; then (( $(pastes) == $1 )); else [[ -z "$(doc)" ]]; fi
+  if [[ -n "${QUIETKEY_LOG:-}" ]]; then (( $(pastes) == $1 )); else [[ -z "$(doc)" ]]; fi
 }
 wait_rows() { # wait_rows <expected> [timeout s]
   local t=0; while (( $(rows) < $1 && t < ${2:-12}*4 )); do sleep 0.25; ((t++)); done; sleep 0.8
@@ -75,12 +75,12 @@ if run F02-H1; then
   check F02-H1c "backtrack 5 actually 6 -> 6" '[[ "$d" == *"at 6"* && "$d" != *5* ]]'
   check F02-H1d "snippet expanded" '[[ "$d" == *test@example.com* ]]'
   check F02-H1e "clipboard restored" '[[ "$(pbpaste)" == ORIGINAL-CLIP ]]'
-  check F02-H1f "row saved: app name recorded, status pasted" '[[ "$(last app_name)" == UtterTestTarget && "$(last status)" == pasted ]]'
+  check F02-H1f "row saved: app name recorded, status pasted" '[[ "$(last app_name)" == QuietkeyTestTarget && "$(last status)" == pasted ]]'
 fi
 
 if run F02-H2; then
   use speech; printf 'CHROME-CLIP' | pbcopy; b=$(rows)
-  open -a "Google Chrome" "data:text/html,<title>utter-test</title><textarea autofocus style='position:fixed;inset:0;width:100vw;height:100vh'></textarea>"
+  open -a "Google Chrome" "data:text/html,<title>quietkey-test</title><textarea autofocus style='position:fixed;inset:0;width:100vw;height:100vh'></textarea>"
   # a cold Chrome start can take longer than a fixed wait
   for i in {1..20}; do [[ "$(osascript -e 'tell application "System Events" to name of first process whose frontmost is true')" == "Google Chrome" ]] && break; sleep 0.5; done; sleep 1.5
   $K click sleep:0.5
@@ -89,7 +89,7 @@ if run F02-H2; then
   $K cmd-a cmd-c sleep:0.4; d=$(pbpaste)
   check F02-H2a "text typed into a Chrome textarea" '[[ "$d" == *meeting* ]]'
   check F02-H2b "clipboard restored after Chrome paste" '[[ "$clip" == CHROME-CLIP ]]'
-  osascript -e 'tell application "Google Chrome" to close (every tab of every window whose title is "utter-test")' 2>/dev/null
+  osascript -e 'tell application "Google Chrome" to close (every tab of every window whose title is "quietkey-test")' 2>/dev/null
 fi
 
 if run F02-E1; then
@@ -155,7 +155,7 @@ fi
 
 if run F02-E10; then
   use speech; b=$(rows)
-  pkill -x UtterTestTarget 2>/dev/null; osascript -e 'tell application "Finder" to activate'; sleep 1.2
+  pkill -x QuietkeyTestTarget 2>/dev/null; osascript -e 'tell application "Finder" to activate'; sleep 1.2
   hold 1.5; wait_rows $((b+1))
   check F02-E10a "no text field focused: saved as paste_failed" '[[ "$(last status)" == paste_failed && "$(last error)" == no_text_field ]]'
   new_doc; $K ctrlcmd-v; sleep 1.5

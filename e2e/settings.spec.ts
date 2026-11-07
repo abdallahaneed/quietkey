@@ -43,7 +43,7 @@ test.describe("Settings", () => {
     await expect(page.getByRole("checkbox", { name: "English" })).toBeChecked();
     await page.getByRole("checkbox", { name: "German" }).check();
     expect(await lastPatch(page)).toEqual({ languages: ["en", "de"] });
-    await expect(page.getByText("Utter detects which of these you are speaking.")).toBeVisible();
+    await expect(page.getByText("Quietkey detects which of these you are speaking.")).toBeVisible();
   });
 
   test("cleanup level", async ({ page }) => {
@@ -115,7 +115,7 @@ test.describe("Settings", () => {
     await open(page, "settings");
     await page.getByRole("switch", { name: "Show the dictation bar" }).click();
     expect(await lastPatch(page)).toEqual({ show_bar: false });
-    await page.getByRole("switch", { name: "Start Utter when you log in" }).click();
+    await page.getByRole("switch", { name: "Start Quietkey when you log in" }).click();
     expect(await lastPatch(page)).toEqual({ launch_at_login: false });
     await expect(page.getByText("Paste last dictation again")).toBeVisible();
   });

@@ -1,4 +1,4 @@
-# Utter
+# Quietkey
 
 Free, open-source voice dictation for macOS. Hold `fn`, talk, let go, and the text is typed wherever your cursor is: Mail, Slack, Notes, a browser, a terminal.
 
@@ -29,8 +29,8 @@ brew install cmake
 npm install
 
 # Speech model (574 MB)
-mkdir -p ~/Library/Application\ Support/dev.abdallah.utter/models
-curl -L -o ~/Library/Application\ Support/dev.abdallah.utter/models/ggml-large-v3-turbo-q5_0.bin \
+mkdir -p ~/Library/Application\ Support/dev.abdallah.quietkey/models
+curl -L -o ~/Library/Application\ Support/dev.abdallah.quietkey/models/ggml-large-v3-turbo-q5_0.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
 # sha256: 394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2
 
@@ -52,7 +52,7 @@ fn down → record (cpal) → fn up → Whisper (local) → snippets + dictionar
 - `src-tauri/src/pipeline.rs` is the state machine for one dictation.
 - `src-tauri/src/cleanup.rs` holds the offline text rules (unit tested).
 - `src-tauri/src/paste.rs` saves every pasteboard type, pastes, then restores it.
-- Data is stored in SQLite in `~/Library/Application Support/dev.abdallah.utter/`. The Groq key is kept in the macOS Keychain.
+- Data is stored in SQLite in `~/Library/Application Support/dev.abdallah.quietkey/`. The Groq key is kept in the macOS Keychain.
 
 ## Tests
 

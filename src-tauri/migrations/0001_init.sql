@@ -1,4 +1,4 @@
--- Local SQLite database: ~/Library/Application Support/dev.abdallah.utter/app.db
+-- Local SQLite database: ~/Library/Application Support/dev.abdallah.quietkey/app.db
 -- Single local user, so no owner columns. Access control is the macOS file permission on the app's own folder.
 -- ids: UUIDv7 text made in Rust (sortable by time). Times: unix epoch milliseconds, UTC, integer.
 

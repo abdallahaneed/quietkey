@@ -7,7 +7,7 @@ use security_framework::passwords::{delete_generic_password, get_generic_passwor
 use serde_json::{json, Value};
 use std::time::Duration;
 
-const KEYCHAIN_SERVICE: &str = "dev.abdallah.utter";
+const KEYCHAIN_SERVICE: &str = "dev.abdallah.quietkey";
 const KEYCHAIN_ACCOUNT: &str = "groq-api-key";
 const GROQ_URL: &str = "https://api.groq.com/openai/v1/chat/completions";
 const TIMEOUT: Duration = Duration::from_secs(8);
@@ -20,8 +20,19 @@ pub fn key_set(key: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Keychain service used before the rename to Quietkey.
+const OLD_KEYCHAIN_SERVICE: &str = "dev.abdallah.utter";
+
 pub fn key_get() -> Option<String> {
-    get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).ok().and_then(|b| String::from_utf8(b).ok())
+    if let Some(k) = get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).ok().and_then(|b| String::from_utf8(b).ok()) {
+        return Some(k);
+    }
+    // A key saved under the old name: move it over once.
+    let old = get_generic_password(OLD_KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).ok().and_then(|b| String::from_utf8(b).ok())?;
+    if set_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, old.as_bytes()).is_ok() {
+        let _ = delete_generic_password(OLD_KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+    }
+    Some(old)
 }
 
 pub fn key_delete() {

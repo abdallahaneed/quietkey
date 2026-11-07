@@ -3203,6 +3203,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "quietkey"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "core-foundation 0.10.1",
+ "core-graphics",
+ "cpal",
+ "hound",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-opener",
+ "uuid",
+ "whisper-rs",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4904,33 +4931,6 @@ name = "utf_types"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
-
-[[package]]
-name = "utter"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "core-foundation 0.10.1",
- "core-graphics",
- "cpal",
- "hound",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "regex",
- "reqwest",
- "rusqlite",
- "security-framework",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-opener",
- "uuid",
- "whisper-rs",
-]
 
 [[package]]
 name = "uuid"

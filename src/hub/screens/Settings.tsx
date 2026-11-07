@@ -135,7 +135,7 @@ export function Settings() {
       {error && <div className="mb-6"><Notice tone="error" action={<Button size="sm" variant="ghost" onClick={() => setError(null)}>Dismiss</Button>}>{error}</Notice></div>}
 
       <Section id="general" title="General">
-        <Row label="Microphone" hint="Utter falls back to the system default if this one is unplugged.">
+        <Row label="Microphone" hint="Quietkey falls back to the system default if this one is unplugged.">
           <div className="flex items-center gap-1">
             <SelectMenu
               label="Microphone"
@@ -157,7 +157,7 @@ export function Settings() {
         <div>
           <p className="text-base font-medium">Languages you speak</p>
           <p className="text-sm text-muted">
-            {multiLang ? "Utter detects which of these you are speaking." : "Utter listens for this language only, which is the most accurate."}
+            {multiLang ? "Quietkey detects which of these you are speaking." : "Quietkey listens for this language only, which is the most accurate."}
           </p>
           <div className="mt-2 rounded-lg border border-border px-4">
             <Switch label="Detect the language automatically" description="Works for any language, slightly less accurate than picking one."
@@ -248,14 +248,14 @@ export function Settings() {
 
       <Section id="system" title="System">
         <div className="rounded-lg border border-border px-4">
-          <Switch label="Start Utter when you log in" checked={s.launch_at_login} onChange={(v) => update({ launch_at_login: v })} />
-          <Switch label="Show the dictation bar" description="When it is hidden, Utter still listens for your shortcut." checked={s.show_bar} onChange={(v) => update({ show_bar: v })} />
+          <Switch label="Start Quietkey when you log in" checked={s.launch_at_login} onChange={(v) => update({ launch_at_login: v })} />
+          <Switch label="Show the dictation bar" description="When it is hidden, Quietkey still listens for your shortcut." checked={s.show_bar} onChange={(v) => update({ show_bar: v })} />
         </div>
       </Section>
 
       <Section id="privacy" title="Privacy" description={s.llm_provider === "groq"
-        ? "Your voice is transcribed on this Mac and never uploaded. With Groq on, the transcribed text of each dictation is sent to Groq for cleanup. Utter never takes screenshots."
-        : "Your voice and text stay on this Mac. Utter makes no network calls for dictation and never takes screenshots."}>
+        ? "Your voice is transcribed on this Mac and never uploaded. With Groq on, the transcribed text of each dictation is sent to Groq for cleanup. Quietkey never takes screenshots."
+        : "Your voice and text stay on this Mac. Quietkey makes no network calls for dictation and never takes screenshots."}>
         <RadioCards label="Dictation history" value={s.storage_mode} onChange={chooseStorage} options={[
           { value: "store", title: "Keep history", body: "Your dictations stay on this Mac until you delete them." },
           { value: "auto_delete_24h", title: "Delete after 24 hours", body: "Each dictation is removed a day after you make it." },

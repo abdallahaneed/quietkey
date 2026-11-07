@@ -54,7 +54,7 @@ export function MicTest() {
       </div>
       {running && <p className="text-sm text-muted" role="status">Say a sentence…</p>}
       {result === "heard" && <Notice tone="success">The microphone hears you.</Notice>}
-      {result === "silent" && <Notice tone="warning">Nothing came through. Pick another microphone in Settings, or check that Utter may use it.</Notice>}
+      {result === "silent" && <Notice tone="warning">Nothing came through. Pick another microphone in Settings, or check that Quietkey may use it.</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
     </div>
   );

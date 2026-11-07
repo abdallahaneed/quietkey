@@ -1,10 +1,10 @@
 // A minimal paste target for the e2e tests: one window with a focused text view.
 // It writes its text to the file given as the first argument every 200 ms and quits when killed.
 // Unlike TextEdit it never autosaves to iCloud, never renames itself and leaves nothing behind.
-// Usage: UtterTestTarget /tmp/out.txt
+// Usage: QuietkeyTestTarget /tmp/out.txt
 import AppKit
 
-let outPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "/tmp/utter-target.txt"
+let outPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "/tmp/quietkey-target.txt"
 
 final class Delegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
@@ -26,7 +26,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
 
         window = NSWindow(contentRect: NSRect(x: 240, y: 240, width: 640, height: 420),
                           styleMask: [.titled], backing: .buffered, defer: false)
-        window.title = "Utter test target"
+        window.title = "Quietkey test target"
         let scroll = NSScrollView(frame: window.contentView!.bounds)
         scroll.autoresizingMask = [.width, .height]
         textView = NSTextView(frame: scroll.bounds)
