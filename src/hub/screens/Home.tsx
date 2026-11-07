@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Copy, Mic, MoreHorizontal } from "lucide-react";
 import { api, events, type Permissions, type Transcript } from "../../lib/api";
-import { EmptyState, IconButton, KeyCaps, Menu, Notice, PageHeader, SkeletonRows, Button, cx } from "../../ui";
+import { EmptyState, IconButton, KeyCaps, Menu, Modal, Notice, PageHeader, SkeletonRows, Button, cx } from "../../ui";
 import type { Nav } from "../Hub";
 
 function dayLabel(ms: number): string {
@@ -20,6 +20,17 @@ export function Home({ nav }: { nav: Nav }) {
   const [error, setError] = useState<string | null>(null);
   const [perm, setPerm] = useState<Permissions | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Transcript | null>(null);
+
+  const remove = async (t: Transcript) => {
+    setConfirmDelete(null);
+    try {
+      await api.transcriptDelete(t.id);
+      setRows((r) => (r ?? []).filter((x) => x.id !== t.id));
+    } catch (e) {
+      setError(`Could not delete: ${e}`);
+    }
+  };
 
   useEffect(() => {
     api.transcriptsList().then(setRows).catch((e) => setError(String(e)));
@@ -65,7 +76,7 @@ export function Home({ nav }: { nav: Nav }) {
           </Notice>
         </div>
       )}
-      {error && <Notice tone="error">Could not load history: {error}</Notice>}
+      {error && <Notice tone="error">{error.startsWith("Could not") ? error : `Could not load history: ${error}`}</Notice>}
       {!rows && !error && <SkeletonRows />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -95,8 +106,8 @@ export function Home({ nav }: { nav: Nav }) {
                     trigger={<IconButton label="More"><MoreHorizontal className="size-4" /></IconButton>}
                     items={[
                       { label: "Copy", onSelect: () => copy(t) },
-                      // TODO: wire delete, retry and undo cleanup (backend commands exist)
-                      { label: "Delete", onSelect: () => {}, danger: true, disabled: true },
+                      // TODO: retry and undo cleanup need the audio kept for a while
+                      { label: "Delete", onSelect: () => setConfirmDelete(t), danger: true },
                     ]}
                   />
                 </div>
@@ -105,6 +116,19 @@ export function Home({ nav }: { nav: Nav }) {
           </ul>
         </section>
       ))}
+      <Modal
+        open={!!confirmDelete}
+        onOpenChange={(o) => !o && setConfirmDelete(null)}
+        title="Delete this dictation?"
+        description="It is removed from your history on this Mac."
+        width="w-[400px]"
+        footer={
+          <>
+            <Button autoFocus onClick={() => setConfirmDelete(null)}>Keep</Button>
+            <Button variant="danger" onClick={() => confirmDelete && remove(confirmDelete)}>Delete</Button>
+          </>
+        }
+      />
     </>
   );
 }

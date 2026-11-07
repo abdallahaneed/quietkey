@@ -43,6 +43,22 @@ test.describe("Home", () => {
     expect(calls).toContain("transcript_copy");
   });
 
+  test("delete a dictation from the menu, after confirming", async ({ page }) => {
+    const t = sampleTranscript({ final_text: "Delete me please" });
+    await open(page, "home", { transcripts: [t, sampleTranscript({ final_text: "Keep me" })] });
+    await page.getByText("Delete me please").hover();
+    await page.getByRole("button", { name: "More" }).first().click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+    await page.getByRole("button", { name: "Keep" }).click();
+    await expect(page.getByText("Delete me please")).toBeVisible();
+    await page.getByText("Delete me please").hover();
+    await page.getByRole("button", { name: "More" }).first().click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+    await expect(page.getByText("Delete me please")).toHaveCount(0);
+    await expect(page.getByText("Keep me")).toBeVisible();
+  });
+
   test("a new dictation appears live at the top", async ({ page }) => {
     await open(page, "home", { transcripts: [sampleTranscript()] });
     await expect(page.getByText("So the meeting is at 6 p.m.")).toBeVisible();
