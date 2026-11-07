@@ -124,6 +124,16 @@ test.describe("Setup", () => {
     await expectNoSeriousA11yIssues(page);
   });
 
+  test("Allow asks macOS first, so Quietkey shows up in System Settings", async ({ page }) => {
+    await open(page, "setup", {
+      permissions: { accessibility: false, input_monitoring: true, hotkey_running: true, fn_key_conflict: false, microphone: "undetermined" },
+    });
+    for (const b of await page.getByRole("button", { name: "Allow" }).all()) await b.click();
+    const cmds = await page.evaluate(() => (window as any).__fake.calls.map((c: any) => c.cmd));
+    expect(cmds).toContain("request_accessibility");
+    expect(cmds).toContain("request_microphone");
+  });
+
   test("macOS fn conflict is explained with a way to fix it", async ({ page }) => {
     await open(page, "setup", {
       permissions: { accessibility: true, input_monitoring: true, hotkey_running: true, fn_key_conflict: true, microphone: "granted" },

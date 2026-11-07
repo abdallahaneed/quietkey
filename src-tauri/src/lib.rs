@@ -269,6 +269,24 @@ fn request_input_monitoring() -> bool {
     hotkey::request_input_monitoring()
 }
 
+#[tauri::command]
+fn request_accessibility() -> bool {
+    paste::request_accessibility()
+}
+
+/// Opens the microphone for a moment so macOS shows its prompt and lists Quietkey under Microphone. The pane has
+/// no + button, so an app that never opened the mic cannot be allowed there. Returns the status afterwards.
+#[tauri::command]
+fn request_microphone(state: State<AppState>) -> &'static str {
+    if audio::mic_permission() == "undetermined" {
+        let mic = store::mic_choice(&state.db.lock().unwrap());
+        if let Ok(rec) = audio::start(mic, |_| {}) {
+            let _ = rec.stop();
+        }
+    }
+    audio::mic_permission()
+}
+
 /// Starts the Fn listener if it is not running yet. Called at launch and again after the user grants permission.
 #[tauri::command]
 fn hotkey_start(state: State<AppState>) -> CmdResult<()> {
@@ -543,6 +561,8 @@ pub fn run() {
             dictation_undo,
             permissions_status,
             request_input_monitoring,
+            request_accessibility,
+            request_microphone,
             hotkey_start,
             hotkey_pause,
             transcript_delete,

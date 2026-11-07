@@ -126,6 +126,8 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
       dictation_undo: () => null,
       "plugin:window|set_ignore_cursor_events": () => null,
       request_input_monitoring: () => true,
+      request_accessibility: () => permissions.accessibility,
+      request_microphone: () => permissions.microphone ?? "granted",
       "plugin:event|listen": (a: { event: string; handler: number }) => {
         listeners.set(a.event, [...(listeners.get(a.event) ?? []), a.handler]);
         return a.handler;

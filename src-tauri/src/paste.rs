@@ -11,6 +11,7 @@ type CFTypeRef = *const std::ffi::c_void;
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
     fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: core_foundation::dictionary::CFDictionaryRef) -> bool;
     fn AXUIElementCreateApplication(pid: i32) -> CFTypeRef;
     fn AXUIElementCopyAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: *mut CFTypeRef) -> i32;
     fn AXUIElementIsAttributeSettable(element: CFTypeRef, attribute: CFTypeRef, settable: *mut u8) -> i32;
@@ -20,6 +21,17 @@ unsafe extern "C" {
 /// Accessibility permission: needed to post the synthetic Cmd+V.
 pub fn accessibility_trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
+}
+
+/// Asks macOS for Accessibility: shows its prompt and, more important, adds Quietkey to the list in
+/// System Settings. Without this call the app is not in the list and the user cannot find it to switch it on.
+pub fn request_accessibility() -> bool {
+    use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::string::CFString;
+    let opts = CFDictionary::from_CFType_pairs(&[(CFString::from_static_string("AXTrustedCheckOptionPrompt"), CFBoolean::true_value())]);
+    unsafe { AXIsProcessTrustedWithOptions(opts.as_concrete_TypeRef()) }
 }
 
 pub struct FrontApp {

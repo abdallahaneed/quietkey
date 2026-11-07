@@ -68,13 +68,13 @@ export function Setup({ nav }: { nav: Nav }) {
             title="Type into other apps"
             body="Accessibility lets Quietkey paste your words where your cursor is."
             granted={!!p?.accessibility}
-            onAllow={() => openUrl(settingsUrl.accessibility)}
+            onAllow={async () => { if (!(await api.requestAccessibility())) await openUrl(settingsUrl.accessibility); }}
           />
           <PermissionRow
             title="Use the microphone"
             body={mic === "undetermined" ? "macOS asks when you test the microphone below." : "Quietkey only records while you hold the shortcut."}
             granted={mic === "granted"}
-            onAllow={() => openUrl(settingsUrl.microphone)}
+            onAllow={async () => { if ((await api.requestMicrophone()) !== "granted") await openUrl(settingsUrl.microphone); }}
           />
         </div>
         <div className="mt-3 flex flex-col gap-3">
@@ -83,7 +83,7 @@ export function Setup({ nav }: { nav: Nav }) {
               The shortcut listener is off. After allowing the first two, start it here. Some Macs need the app restarted.
             </Notice>
           )}
-          {p?.hotkey_running && <Notice tone="success">Ready. Hold {keys} in any text field and talk.</Notice>}
+          {p?.hotkey_running && p.input_monitoring && p.accessibility && <Notice tone="success">Ready. Hold {keys} in any text field and talk.</Notice>}
           {hotkeyError && <Notice tone="error">Could not start: {hotkeyError}</Notice>}
           {p?.fn_key_conflict && pushToTalk(s).includes("Fn") && (
             <Notice tone="warning" action={<Button size="sm" onClick={() => openUrl(settingsUrl.keyboard)}>Open Keyboard settings</Button>}>

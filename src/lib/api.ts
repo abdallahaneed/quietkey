@@ -77,6 +77,8 @@ export const api = {
   micTestStop: () => invoke<void>("mic_test_stop"),
   permissions: () => invoke<Permissions>("permissions_status"),
   requestInputMonitoring: () => invoke<boolean>("request_input_monitoring"),
+  requestAccessibility: () => invoke<boolean>("request_accessibility"),
+  requestMicrophone: () => invoke<string>("request_microphone"),
   hotkeyStart: () => invoke<void>("hotkey_start"),
   transcriptDelete: (id: string) => invoke<number>("transcript_delete", { id }),
 
