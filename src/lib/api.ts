@@ -88,6 +88,8 @@ export const api = {
   groqKeyDelete: () => invoke<void>("llm_key_delete"),
   cleanupTest: () => invoke<string>("llm_test"),
 
+  models: () => invoke<WhisperModel[]>("models_list"),
+  modelSelect: (id: string) => invoke<void>("model_select", { id }),
   dictionary: () => invoke<DictEntry[]>("dictionary_list"),
   dictionaryAdd: (word: string, misspelling: string | null) => invoke<string>("dictionary_add", { word, misspelling }),
   dictionaryUpdate: (id: string, word: string, misspelling: string | null) => invoke<void>("dictionary_update", { id, word, misspelling }),
@@ -109,7 +111,22 @@ export function applyTheme(theme: Settings["theme"]) {
   else document.documentElement.dataset.theme = theme;
 }
 
+export type WhisperModel = {
+  model: { id: string; label: string; size_mb: number; ram_mb: number; note: string };
+  downloaded: boolean;
+  active: boolean;
+};
+export type ModelEvent =
+  | { kind: "progress"; id: string; done: number; total: number }
+  | { kind: "ready"; id: string }
+  | { kind: "error"; id: string; message: string };
+
 export const events = {
+  onModel: async (cb: (e: ModelEvent) => void): Promise<UnlistenFn> => {
+    const un = await Promise.all((["progress", "ready", "error"] as const).map((kind) =>
+      listen<any>(`model://${kind}`, (e) => cb({ kind, ...e.payload }))));
+    return () => un.forEach((f) => f());
+  },
   onState: (cb: (s: { state: DictationState; message: string | null }) => void): Promise<UnlistenFn> =>
     listen<{ state: DictationState; message: string | null }>("dictation://state", (e) => cb(e.payload)),
   onLevel: (cb: (rms: number) => void): Promise<UnlistenFn> => listen<number>("dictation://level", (e) => cb(e.payload)),

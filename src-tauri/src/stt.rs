@@ -1,7 +1,69 @@
 use std::path::Path;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState};
 
-pub const MODEL_FILE: &str = "ggml-large-v3-turbo-q5_0.bin";
+/// The models offered in Settings. Sizes are the download; RAM is what the app uses with the model loaded,
+/// measured on an M-series Mac (cargo test --lib model_ram -- --ignored).
+#[derive(serde::Serialize, Clone, Copy)]
+pub struct Model {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub file: &'static str,
+    pub size_mb: u32,
+    pub ram_mb: u32,
+    pub note: &'static str,
+}
+
+pub const MODELS: &[Model] = &[
+    Model { id: "base", label: "Base", file: "ggml-base-q5_1.bin", size_mb: 60, ram_mb: 180, note: "Fastest, for older Macs. Misses more words" },
+    Model { id: "small", label: "Small", file: "ggml-small-q5_1.bin", size_mb: 190, ram_mb: 350, note: "Good for clear English" },
+    Model { id: "large-v3-turbo", label: "Large v3 Turbo", file: "ggml-large-v3-turbo-q5_0.bin", size_mb: 574, ram_mb: 700, note: "Most accurate, best for names and mixed languages" },
+];
+
+/// The model for a settings value; unknown values get the default (the last, most accurate one).
+pub fn model(id: Option<&str>) -> &'static Model {
+    MODELS.iter().find(|m| Some(m.id) == id).unwrap_or(&MODELS[MODELS.len() - 1])
+}
+
+/// Downloads `m` into `dir` (a .part file, renamed once complete). `progress(done, total)` gets byte counts.
+// shortcut: checks the byte count, not a checksum; a corrupt file fails at Stt::load. Add sha256 if that happens.
+pub fn download(m: &Model, dir: &Path, progress: impl Fn(u64, u64)) -> anyhow::Result<std::path::PathBuf> {
+    use std::io::{Read, Write};
+    let dest = dir.join(m.file);
+    if dest.exists() {
+        return Ok(dest);
+    }
+    let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}", m.file);
+    let mut resp = reqwest::blocking::Client::builder()
+        .timeout(None)
+        .build()?
+        .get(&url)
+        .send()?
+        .error_for_status()?;
+    let total = resp.content_length().unwrap_or(0);
+    let part = dir.join(format!("{}.part", m.file));
+    let mut out = std::fs::File::create(&part)?;
+    let (mut done, mut buf, mut last) = (0u64, vec![0u8; 1 << 16], 0u64);
+    loop {
+        let n = resp.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(&buf[..n])?;
+        done += n as u64;
+        if done - last >= total / 200 + 1 {
+            last = done;
+            progress(done, total);
+        }
+    }
+    out.sync_all()?;
+    if total > 0 && done != total {
+        let _ = std::fs::remove_file(&part);
+        anyhow::bail!("download stopped at {done} of {total} bytes");
+    }
+    std::fs::rename(&part, &dest)?;
+    progress(done, total);
+    Ok(dest)
+}
 
 /// Loaded once and kept in memory: loading the model per dictation would add ~1 s.
 pub struct Stt {
@@ -149,7 +211,7 @@ mod bench {
         let at = wav.windows(4).position(|w| w == b"data").unwrap() + 8; // 32-bit float PCM after the data chunk header
         let samples: Vec<f32> = wav[at..].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::MODEL_FILE);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(None).file);
         let t0 = std::time::Instant::now();
         let mut stt = super::Stt::load(&model).unwrap();
         let load = t0.elapsed();
@@ -170,7 +232,7 @@ mod lang_bench {
     fn detects_among_picked() {
         let dir = std::path::PathBuf::from(std::env::var("QUIETKEY_FIXTURES").unwrap());
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::MODEL_FILE);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(None).file);
         let mut stt = super::Stt::load(&model).unwrap();
         let picked = ["en".to_string(), "de".to_string()];
         for (n, want) in [("german", "de"), ("short", "en"), ("speech", "en")] {
@@ -193,7 +255,7 @@ mod mixed_bench {
     fn english_with_german_words() {
         let dir = std::path::PathBuf::from(std::env::var("QUIETKEY_MIX_DIR").unwrap());
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::MODEL_FILE);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(None).file);
         let mut stt = super::Stt::load(&model).unwrap();
         let picked = ["en".to_string(), "de".to_string()];
         let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wav")).collect();
@@ -224,7 +286,7 @@ mod ctx_bench {
             r.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect()
         };
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::MODEL_FILE);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(None).file);
         let mut stt = super::Stt::load(&model).unwrap();
         for ctx in [None, Some(768), Some(1500)] {
             println!("=== ctx {:?}", ctx);
@@ -241,4 +303,25 @@ mod ctx_bench {
             }
         }
     }
+
+    /// F6 RAM figures: downloads the model if missing, loads it, transcribes 5 s, prints the resident memory added.
+    /// One model per process: QK_MODEL=small cargo test --lib model_ram -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn model_ram() {
+        let rss = || -> u64 {
+            let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &std::process::id().to_string()]).output().unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().unwrap() / 1024
+        };
+        let m = super::model(std::env::var("QK_MODEL").ok().as_deref());
+        let home = std::env::var("HOME").unwrap();
+        let dir = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models");
+        let path = super::download(m, &dir, |d, t| if d == t { println!("downloaded {d} bytes") }).unwrap();
+        let before = rss();
+        let mut stt = super::Stt::load(&path).unwrap();
+        let tone: Vec<f32> = (0..80_000).map(|i| (i as f32 * 0.05).sin() * 0.1).collect();
+        let _ = stt.transcribe(&tone, Some("en"), "");
+        println!("{} RAM {} MB", m.id, rss() - before);
+    }
 }
+

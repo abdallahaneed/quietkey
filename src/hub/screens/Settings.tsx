@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ShortcutEditor } from "../parts/ShortcutEditor";
 import { api, applyTheme, pushToTalk, settingsUrl, type DeleteCategory, type Mic, type Permissions, type Settings as S } from "../../lib/api";
 import { Button, Checkbox, IconButton, KeyCaps, Modal, Notice, PageHeader, RadioCards, SelectMenu, SkeletonRows, Switch, TextInput } from "../../ui";
+import { ModelPicker } from "../parts/ModelPicker";
 
 const LANGUAGES: [string, string][] = [
   ["en", "English"], ["de", "German"], ["ar", "Arabic"], ["fr", "French"], ["es", "Spanish"], ["tr", "Turkish"],
@@ -171,6 +172,10 @@ export function Settings() {
             ))}
           </fieldset>
         </div>
+      </Section>
+
+      <Section id="model" title="Speech model" description="Runs on this Mac. Bigger models hear names and accents better but use more memory.">
+        <ModelPicker />
       </Section>
 
       <Section id="cleanup" title="Cleanup" description="What happens to the text between speaking and pasting.">

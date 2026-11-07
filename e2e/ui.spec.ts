@@ -56,6 +56,27 @@ test.describe("Home", () => {
     expect(args).toEqual([{ id: t.id, raw: true }]);
   });
 
+  test("add a misheard name to the dictionary from a history entry", async ({ page }) => {
+    const t = sampleTranscript({ final_text: "Ask Abdullah about it" });
+    await open(page, "home", { transcripts: [t] });
+    // Select the misheard word in the entry, then use the menu: both fields start from the selection.
+    await page.getByText(t.final_text).evaluate((el) => {
+      const r = document.createRange();
+      const node = el.firstChild!;
+      r.setStart(node, 4); r.setEnd(node, 12);
+      getSelection()!.removeAllRanges(); getSelection()!.addRange(r);
+    });
+    await page.getByText(t.final_text).hover();
+    await page.getByRole("button", { name: "More" }).first().click();
+    await page.getByRole("menuitem", { name: "Add to dictionary" }).click();
+    await expect(page.getByLabel("Whisper wrote (optional)")).toHaveValue("Abdullah");
+    await page.getByLabel("Correct spelling").fill("Abdallah");
+    await page.getByRole("dialog").getByRole("button", { name: "Add" }).click();
+    await expect(page.getByText('"Abdallah" added to your dictionary.')).toBeVisible();
+    const args = await page.evaluate(() => (window as any).__fake.calls.filter((c: any) => c.cmd === "dictionary_add").map((c: any) => c.args));
+    expect(args).toEqual([{ word: "Abdallah", misspelling: "Abdullah" }]);
+  });
+
   test("delete a dictation from the menu, after confirming", async ({ page }) => {
     const t = sampleTranscript({ final_text: "Delete me please" });
     await open(page, "home", { transcripts: [t, sampleTranscript({ final_text: "Keep me" })] });

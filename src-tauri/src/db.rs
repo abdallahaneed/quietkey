@@ -4,6 +4,7 @@ use std::path::Path;
 
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
+    include_str!("../migrations/0002_model.sql"),
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -160,6 +161,11 @@ mod tests {
         assert_eq!(n, 4);
         let v: i64 = c.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(v, MIGRATIONS.len() as i64);
+        // 0002: existing installs keep the model they had; only the three offered ones are accepted
+        assert_eq!(crate::store::model_choice(&c).as_deref(), Some("large-v3-turbo"));
+        crate::store::set_model(&c, "small").unwrap();
+        assert_eq!(crate::store::model_choice(&c).as_deref(), Some("small"));
+        assert!(crate::store::set_model(&c, "tiny").is_err());
     }
 
     #[test]

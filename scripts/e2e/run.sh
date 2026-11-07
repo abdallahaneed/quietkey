@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "${0:A:h}"
 DB="$HOME/Library/Application Support/dev.abdallah.quietkey/app.db"
-[[ -x keys ]] || swiftc -O keys.swift -o keys
+[[ keys -nt keys.swift ]] || swiftc -O keys.swift -o keys
 [[ -f speech.wav ]] || { say -o speech.aiff "Um, so the the meeting is at 5, actually 6 p m. Please send the notes to my email. Thanks a lot."; afconvert -f WAVE -d LEI16@16000 -c 1 speech.aiff speech.wav; rm speech.aiff; }
 
 sqlite3 "$DB" "insert or ignore into snippets (id, trigger, expansion, created_at, updated_at) values ('e2e-snip','my email','test@example.com',1,1)"

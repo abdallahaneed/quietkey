@@ -16,7 +16,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, LogicalPosition, State, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 struct AppState {
@@ -288,20 +288,45 @@ fn start_hotkey(state: &AppState) -> CmdResult<()> {
     Ok(())
 }
 
-/// Bottom centre of the primary screen, a little above the Dock.
+/// Click-through panel, placed on the screen in use and shown.
 fn place_bar(app: &AppHandle) {
     let Some(bar) = app.get_webview_window("bar") else { return };
     // Click-through until the bar shows buttons; Bar.tsx turns clicks on and off per state.
     let _ = bar.set_ignore_cursor_events(true);
     #[cfg(target_os = "macos")]
     make_panel(&bar);
-    if let (Ok(Some(mon)), Ok(size)) = (bar.primary_monitor(), bar.outer_size()) {
-        let m = mon.size();
-        let x = (m.width as i32 - size.width as i32) / 2;
-        let y = m.height as i32 - size.height as i32 - (88.0 * mon.scale_factor()) as i32;
-        let _ = bar.set_position(PhysicalPosition::new(x, y));
-    }
+    position_bar(app);
     let _ = bar.show();
+}
+
+/// Bottom centre of the screen under the mouse pointer, a little above the Dock. Called at every dictation start,
+/// so with two displays the bar is where the user is working, and follows displays being plugged in or out.
+pub(crate) fn position_bar(app: &AppHandle) {
+    let Some(bar) = app.get_webview_window("bar") else { return };
+    // Compare in points: Tauri's cursor position is in pixels of one scale, so with a Retina and a 1x display side by
+    // side it matched the wrong screen (measured: pointer on the laptop put the bar on the external display).
+    let at = core_graphics::event_source::CGEventSource::new(core_graphics::event_source::CGEventSourceStateID::HIDSystemState)
+        .and_then(core_graphics::event::CGEvent::new)
+        .map(|e| e.location())
+        .ok();
+    let mon = at
+        .and_then(|p| {
+            app.available_monitors().ok()?.into_iter().find(|m| {
+                let s = m.scale_factor();
+                let (x, y) = (m.position().x as f64 / s, m.position().y as f64 / s);
+                let (w, h) = (m.size().width as f64 / s, m.size().height as f64 / s);
+                p.x >= x && p.x < x + w && p.y >= y && p.y < y + h
+            })
+        })
+        .or_else(|| bar.primary_monitor().ok().flatten());
+    let (Some(mon), Ok(size)) = (mon, bar.outer_size()) else { return };
+    // Logical points: physical pixels differ per screen when a Retina and a normal display are mixed.
+    let s = mon.scale_factor();
+    let (ox, oy) = (mon.position().x as f64 / s, mon.position().y as f64 / s);
+    let (mw, mh) = (mon.size().width as f64 / s, mon.size().height as f64 / s);
+    let bs = bar.scale_factor().unwrap_or(s);
+    let (bw, bh) = (size.width as f64 / bs, size.height as f64 / bs);
+    let _ = bar.set_position(LogicalPosition::new(ox + (mw - bw) / 2.0, oy + mh - bh - 88.0));
 }
 
 /// Turns the bar into a non-activating panel: clicking Stop or Undo does not take focus from the app being
@@ -340,6 +365,53 @@ fn make_panel(bar: &tauri::WebviewWindow) {
             eprintln!("[panel] class={} styleMask={m:#x}", cls.name().to_string_lossy());
         }
     }
+}
+
+/// Loads and warms up a model, then makes it the one dictation uses. The old one is freed after the swap.
+fn load_model(path: &std::path::Path) -> anyhow::Result<()> {
+    let mut s = stt::Stt::load(path)?;
+    let _ = s.transcribe(&vec![0.0; 16_000], Some("en"), "");
+    *pipeline::STT.lock().unwrap() = Some(s); // waits for a transcription in progress
+    pipeline::READY.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+/// The model picker: each model with its download size, RAM, and whether it is on disk or in use.
+#[tauri::command]
+fn models_list(app: AppHandle, state: State<AppState>) -> CmdResult<Vec<serde_json::Value>> {
+    let dir = app.path().app_data_dir().map_err(err)?.join("models");
+    let active = stt::model(store::model_choice(&state.db.lock().unwrap()).as_deref()).id;
+    Ok(stt::MODELS
+        .iter()
+        .map(|m| serde_json::json!({ "model": m, "downloaded": dir.join(m.file).exists(), "active": m.id == active }))
+        .collect())
+}
+
+static SWITCHING: AtomicBool = AtomicBool::new(false);
+
+/// Downloads (if needed) and loads model `id` in the background, then saves it as the choice. Progress arrives on
+/// "model://progress" {id, done, total}; the end on "model://ready" {id} or "model://error" {id, message}.
+#[tauri::command]
+fn model_select(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
+    let m = *stt::MODELS.iter().find(|m| m.id == id).ok_or("Unknown model")?;
+    if SWITCHING.swap(true, Ordering::SeqCst) {
+        return Err("Already switching models, wait for it to finish".into());
+    }
+    let dir = app.path().app_data_dir().map_err(err)?.join("models");
+    let db = state.db.clone();
+    std::thread::spawn(move || {
+        let res = stt::download(&m, &dir, |done, total| {
+            let _ = app.emit("model://progress", serde_json::json!({ "id": m.id, "done": done, "total": total }));
+        })
+        .and_then(|path| load_model(&path))
+        .and_then(|()| store::set_model(&db.lock().unwrap(), m.id).map_err(Into::into));
+        SWITCHING.store(false, Ordering::SeqCst);
+        let _ = match res {
+            Ok(()) => app.emit("model://ready", serde_json::json!({ "id": m.id })),
+            Err(e) => app.emit("model://error", serde_json::json!({ "id": m.id, "message": e.to_string() })),
+        };
+    });
+    Ok(())
 }
 
 fn show_hub(app: &AppHandle) {
@@ -381,19 +453,13 @@ pub fn run() {
 
             // Model load + warm-up off the main thread; the first transcription is ~40% slower without it.
             let handle = app.handle().clone();
-            let model = data.join("models").join(stt::MODEL_FILE);
+            let choice = store::model_choice(&db.lock().unwrap());
+            let model = data.join("models").join(stt::model(choice.as_deref()).file);
             std::thread::Builder::new().name("pipeline".into()).spawn(move || {
-                let stt = match stt::Stt::load(&model) {
-                    Ok(mut s) => {
-                        let _ = s.transcribe(&vec![0.0; 16_000], Some("en"), "");
-                        Some(s)
-                    }
-                    Err(e) => {
-                        let _ = handle.emit("dictation://state", pipeline::StatePayload { state: "error", message: Some(format!("{e}")) });
-                        None
-                    }
-                };
-                Pipeline { app: handle, db, stt }.run(rx);
+                if let Err(e) = load_model(&model) {
+                    let _ = handle.emit("dictation://state", pipeline::StatePayload { state: "error", message: Some(format!("{e}")) });
+                }
+                Pipeline { app: handle, db }.run(rx);
             })?;
 
             // Retention job: at startup and every hour.
@@ -465,6 +531,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            models_list,
+            model_select,
             transcripts_list,
             transcript_copy,
             copy_last,

@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Copy, Mic, MoreHorizontal } from "lucide-react";
 import { api, events, pushToTalk, type Permissions, type Transcript } from "../../lib/api";
-import { EmptyState, IconButton, KeyCaps, Menu, Modal, Notice, PageHeader, SkeletonRows, Button, cx } from "../../ui";
+import { EmptyState, IconButton, KeyCaps, Menu, Modal, Notice, PageHeader, SkeletonRows, Button, TextInput, cx } from "../../ui";
 import type { Nav } from "../Hub";
 
 function dayLabel(ms: number): string {
@@ -23,6 +23,27 @@ export function Home({ nav }: { nav: Nav }) {
   const [showRaw, setShowRaw] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<Transcript | null>(null);
   const [keys, setKeys] = useState<string[]>(["Fn"]);
+  // "Add to dictionary" from an entry: a name Whisper got wrong is fixed where the user sees it.
+  const [adding, setAdding] = useState<{ word: string; heard: string } | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const openAdd = () => {
+    // Text selected in the entry is usually the misheard word: start both fields from it.
+    const sel = (window.getSelection()?.toString() ?? "").trim().slice(0, 60);
+    setAddError(null);
+    setAdding({ word: sel, heard: sel });
+  };
+  const saveWord = async () => {
+    if (!adding?.word.trim()) return;
+    const heard = adding.heard.trim() && adding.heard.trim() !== adding.word.trim() ? adding.heard : null;
+    try {
+      await api.dictionaryAdd(adding.word, heard);
+      setAdding(null);
+      setNotice(`"${adding.word.trim()}" added to your dictionary.`);
+    } catch (e) {
+      setAddError(String(e));
+    }
+  };
   useEffect(() => { api.settings().then((s) => setKeys(pushToTalk(s))).catch(() => {}); }, []);
 
   const remove = async (t: Transcript) => {
@@ -83,6 +104,7 @@ export function Home({ nav }: { nav: Nav }) {
           </Notice>
         </div>
       )}
+      {notice && <div className="mb-4"><Notice tone="success">{notice}</Notice></div>}
       {error && <Notice tone="error">{error.startsWith("Could not") ? error : `Could not load history: ${error}`}</Notice>}
       {!rows && !error && <SkeletonRows />}
       {rows && rows.length === 0 && (
@@ -124,6 +146,7 @@ export function Home({ nav }: { nav: Nav }) {
                     items={[
                       { label: "Copy", onSelect: () => copy(t) },
                       ...(edited(t) ? [{ label: "Copy what you said", onSelect: () => copy(t, true) }] : []),
+                      { label: "Add to dictionary", onSelect: openAdd },
                       { label: "Delete", onSelect: () => setConfirmDelete(t), danger: true },
                     ]}
                   />
@@ -133,6 +156,28 @@ export function Home({ nav }: { nav: Nav }) {
           </ul>
         </section>
       ))}
+      <Modal
+        open={!!adding}
+        onOpenChange={(o) => !o && setAdding(null)}
+        title="Add to dictionary"
+        description="Whisper gets this spelling right from now on."
+        width="w-[400px]"
+        footer={
+          <>
+            <Button onClick={() => setAdding(null)}>Cancel</Button>
+            <Button variant="primary" disabled={!adding?.word.trim()} onClick={saveWord}>Add</Button>
+          </>
+        }
+      >
+        {adding && (
+          <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); saveWord(); }}>
+            {addError && <Notice tone="error">{addError}</Notice>}
+            <TextInput label="Correct spelling" autoFocus maxLength={60} value={adding.word} onChange={(e) => setAdding({ ...adding, word: e.target.value })} placeholder="e.g. Aneed" />
+            <TextInput label="Whisper wrote (optional)" maxLength={60} value={adding.heard} onChange={(e) => setAdding({ ...adding, heard: e.target.value })} placeholder="e.g. a need" />
+            <button type="submit" hidden />
+          </form>
+        )}
+      </Modal>
       <Modal
         open={!!confirmDelete}
         onOpenChange={(o) => !o && setConfirmDelete(null)}

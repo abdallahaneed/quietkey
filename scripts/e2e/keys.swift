@@ -1,5 +1,5 @@
 // Usage: keys fn-down | fn-up | space | left | esc | ctrlcmd-v | ctrlcmd-c | cmd-a | cmd-c | click | click-bar:<dx> | sleep:<s> ...
-// click-bar clicks the dictation pill, dx points right of its centre (the bar sits at the bottom centre, see lib.rs place_bar).
+// click-bar clicks the dictation pill, dx points right of its centre. The bar window is looked up, so it works on any display.
 // Events are posted like real HID input.
 import CoreGraphics
 import Foundation
@@ -18,6 +18,19 @@ func click(_ at: CGPoint? = nil) { // left click, in the middle of the main scre
     for t in [CGEventType.leftMouseDown, .leftMouseUp] {
         CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)!.post(tap: .cghidEventTap)
     }
+}
+/// The on-screen 220x56 window of the Quietkey process (tauri.conf.json "bar"), in global top-left coordinates.
+/// Titles need Screen Recording permission, so match owner and size.
+func barFrame() -> CGRect {
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+    for w in list {
+        guard (w[kCGWindowOwnerName as String] as? String)?.lowercased().contains("quietkey") == true,
+              let d = w[kCGWindowBounds as String] as? NSDictionary,
+              let r = CGRect(dictionaryRepresentation: d), r.width == 220, r.height == 56 else { continue }
+        return r
+    }
+    FileHandle.standardError.write("click-bar: bar window not found\n".data(using: .utf8)!)
+    exit(2)
 }
 func fn(_ down: Bool) {
     let e = CGEvent(keyboardEventSource: src, virtualKey: 63, keyDown: down)!
@@ -39,9 +52,9 @@ for a in CommandLine.arguments.dropFirst() {
     case "cmd-c": key(8, .maskCommand)
     case "click": click()
     case _ where a.hasPrefix("click-bar:"):
-        // pill centre: 88 pt above the screen bottom to the window, 8 pt padding, half of the 36 pt pill
-        let b = CGDisplayBounds(CGMainDisplayID())
-        click(CGPoint(x: b.midX + (Double(a.dropFirst(10)) ?? 0), y: b.maxY - 88 - 8 - 18))
+        // pill centre: 8 pt padding plus half of the 36 pt pill below the window top
+        let b = barFrame()
+        click(CGPoint(x: b.midX + (Double(a.dropFirst(10)) ?? 0), y: b.minY + 8 + 18))
     default:
         if a.hasPrefix("sleep:"), let s = Double(a.dropFirst(6)) { Thread.sleep(forTimeInterval: s) }
     }

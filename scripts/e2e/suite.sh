@@ -12,8 +12,9 @@ DB="$HOME/Library/Application Support/dev.abdallah.quietkey/app.db"
 FX=fixtures
 K=./keys
 mkdir -p $FX
-[[ -x keys ]] || swiftc -O keys.swift -o keys
+[[ keys -nt keys.swift ]] || swiftc -O keys.swift -o keys
 [[ -x QuietkeyTestTarget ]] || swiftc -O target.swift -o QuietkeyTestTarget
+[[ barcheck -nt barcheck.swift ]] || swiftc -O barcheck.swift -o barcheck
 OUT=$(mktemp -t quietkey-target)
 
 # --- fixtures (generated once, not committed) ---------------------------------
@@ -230,6 +231,11 @@ if run F03-E2; then
   use speech; new_doc; b=$(rows)
   $K fn-down sleep:1.5 esc fn-up sleep:1 click-bar:31; wait_rows $((b+1))
   check F03-E2 "Undo on the bar after Esc transcribes and pastes after all" '[[ "$(doc)" == *meeting* ]] && (( $(rows) == b + 1 ))'
+fi
+
+if run F03-H4; then
+  out=$(./barcheck)
+  check F03-H4 "the bar opens on the display under the pointer ($(grep -c . <<<"$out") displays)" '[[ -n "$out" && "$out" != *inside=false* ]]'
 fi
 
 if run F04-H1; then

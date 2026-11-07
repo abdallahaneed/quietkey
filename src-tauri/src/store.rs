@@ -159,6 +159,16 @@ pub fn pipeline_settings(conn: &Connection) -> rusqlite::Result<PipelineSettings
 }
 
 /// The microphone the user picked, by device name. None = system default.
+/// The picked Whisper model id. Written only by model_select once the model has loaded, never by settings_update,
+/// so it always names a file that is on disk.
+pub fn model_choice(conn: &Connection) -> Option<String> {
+    conn.query_row("select model from settings where id = 1", [], |r| r.get::<_, String>(0)).ok()
+}
+
+pub fn set_model(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("update settings set model = ?1, updated_at = ?2 where id = 1", params![id, now_ms()]).map(|_| ())
+}
+
 pub fn mic_choice(conn: &Connection) -> Option<String> {
     conn.query_row("select mic_id from settings where id = 1", [], |r| r.get::<_, Option<String>>(0)).ok().flatten()
 }

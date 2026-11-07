@@ -32,3 +32,4 @@ test-results/
 playwright-report/
 test-results/
 playwright-report/
+scripts/e2e/barcheck

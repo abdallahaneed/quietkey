@@ -10,7 +10,7 @@ use crate::stt::Stt;
 use crate::{cleanup, llm, store};
 use rusqlite::Connection;
 use serde::Serialize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -62,10 +62,14 @@ struct Job {
     refocus: bool,
 }
 
+/// The loaded model. Settings swaps it when the user picks another one; the worker holds the lock while it transcribes.
+pub static STT: Mutex<Option<Stt>> = Mutex::new(None);
+/// A model is loaded. Read on every key press, which must never wait for a transcription to release STT.
+pub static READY: AtomicBool = AtomicBool::new(false);
+
 pub struct Pipeline {
     pub app: AppHandle,
     pub db: Arc<Mutex<Connection>>,
-    pub stt: Option<Stt>,
 }
 
 fn emit(app: &AppHandle, state: &'static str, message: Option<String>) {
@@ -75,13 +79,12 @@ fn emit(app: &AppHandle, state: &'static str, message: Option<String>) {
 impl Pipeline {
     pub fn run(self, rx: Receiver<Input>) {
         let (jobs, job_rx) = mpsc::channel::<Job>();
-        let ready = self.stt.is_some();
-        let worker = Worker { app: self.app.clone(), db: self.db.clone(), stt: self.stt };
+        let worker = Worker { app: self.app.clone(), db: self.db.clone() };
         if std::thread::Builder::new().name("dictation-worker".into()).spawn(move || worker.run(job_rx)).is_err() {
             emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Quietkey".into()));
             return;
         }
-        Machine { app: self.app, db: self.db, jobs, ready, last_tap: None, cancelled: None }.run(rx);
+        Machine { app: self.app, db: self.db, jobs, last_tap: None, cancelled: None }.run(rx);
     }
 }
 
@@ -89,7 +92,6 @@ struct Machine {
     app: AppHandle,
     db: Arc<Mutex<Connection>>,
     jobs: Sender<Job>,
-    ready: bool,
     /// When the last too-short tap ended, for the double-press.
     last_tap: Option<Instant>,
     /// The last cancelled recording, kept briefly for Undo.
@@ -207,7 +209,7 @@ impl Machine {
     }
 
     fn start(&self, mode: Mode) -> Option<Active> {
-        if !self.ready {
+        if !READY.load(Ordering::SeqCst) {
             emit(&self.app, "error", Some("Speech model isn't ready. Quit and reopen Quietkey".into()));
             return None;
         }
@@ -224,6 +226,7 @@ impl Machine {
         let mic = store::mic_choice(&self.db.lock().unwrap());
         match audio::start(mic, on_level) {
             Ok(rec) => {
+                crate::position_bar(&self.app);
                 let state = if mode == Mode::Hold { "recording" } else { "hands_free" };
                 let note = rec.used_fallback.then(|| "Chosen microphone not found, using the default".to_string());
                 emit(&self.app, state, note);
@@ -261,7 +264,6 @@ fn target(at_start: paste::FrontApp) -> paste::FrontApp {
 struct Worker {
     app: AppHandle,
     db: Arc<Mutex<Connection>>,
-    stt: Option<Stt>,
 }
 
 impl Worker {
@@ -330,7 +332,8 @@ impl Worker {
                 store::tone_for_app(&conn, bundle),
             )
         };
-        let stt = self.stt.as_mut().ok_or_else(|| anyhow::anyhow!("model not loaded"))?;
+        let mut loaded = STT.lock().unwrap();
+        let stt = loaded.as_mut().ok_or_else(|| anyhow::anyhow!("model not loaded"))?;
         let t0 = Instant::now();
         let prompt = words.join(", ");
         let (raw, language) = if cfg.candidates.is_empty() {
@@ -338,6 +341,7 @@ impl Worker {
         } else {
             stt.transcribe_among(samples, &cfg.candidates, &prompt)?
         };
+        drop(loaded); // cleanup below may call Groq or Ollama; a model switch need not wait for that
         #[cfg(debug_assertions)]
         eprintln!("[timing] transcribe {:?} for {:.1}s audio", t0.elapsed(), samples.len() as f32 / 16_000.0);
         if raw.is_empty() {

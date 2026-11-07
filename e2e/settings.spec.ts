@@ -16,6 +16,23 @@ test.describe("Settings", () => {
     await expectNoSeriousA11yIssues(page);
   });
 
+  test("pick a smaller speech model: shows memory, download progress, then switches", async ({ page }) => {
+    await open(page, "settings");
+    const small = page.getByRole("radio", { name: /Small/ });
+    await expect(small).toContainText("about 350 MB of memory");
+    await expect(small).toContainText("190 MB download");
+    await expect(page.getByRole("radio", { name: /Large v3 Turbo/ })).toBeChecked();
+    await small.click();
+    const sent = await page.evaluate(() => (window as any).__fake.calls.filter((c: any) => c.cmd === "model_select").map((c: any) => c.args));
+    expect(sent).toEqual([{ id: "small" }]);
+    await page.evaluate(() => (window as any).__fake.emit("model://progress", { id: "small", done: 95_000_000, total: 190_000_000 }));
+    await expect(small).toContainText("Downloading 50%");
+    await expect(page.getByRole("radio", { name: /Base/ })).toBeDisabled();
+    await page.evaluate(() => (window as any).__fake.emit("model://error", { id: "small", message: "network is down" }));
+    await expect(page.getByText("Could not switch the model: network is down")).toBeVisible();
+    await expect(page.getByRole("radio", { name: /Base/ })).toBeEnabled();
+  });
+
   test("pick a microphone", async ({ page }) => {
     await open(page, "settings");
     await page.getByRole("combobox", { name: "Microphone" }).click();

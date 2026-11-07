@@ -36,6 +36,11 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
       sounds: true, onboarding_done: false, ...(s.settings ?? {}),
     };
     let groqKey = s.groqKeySaved ?? false;
+    const models = [
+      { model: { id: "base", label: "Base", size_mb: 60, ram_mb: 180, note: "Fastest, for older Macs. Misses more words" }, downloaded: false, active: false },
+      { model: { id: "small", label: "Small", size_mb: 190, ram_mb: 350, note: "Good for clear English" }, downloaded: false, active: false },
+      { model: { id: "large-v3-turbo", label: "Large v3 Turbo", size_mb: 574, ram_mb: 700, note: "Most accurate" }, downloaded: true, active: true },
+    ];
     const dupWord = (w: string, m: string | null, skip?: string) =>
       dict.some((d) => d.id !== skip && d.word.toLowerCase() === w.toLowerCase() && (d.misspelling ?? "").toLowerCase() === (m ?? "").toLowerCase());
     const handlers: Record<string, (args: any) => unknown> = {
@@ -109,6 +114,8 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
         row.tone = a.tone;
         return null;
       },
+      models_list: () => models.map((m) => ({ ...m, model: { ...m.model } })),
+      model_select: () => null,
       transcript_copy: () => null,
       hotkey_start: () => null,
       hotkey_pause: () => null,
