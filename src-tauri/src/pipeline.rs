@@ -6,7 +6,7 @@ use crate::audio::{self, Recording};
 use crate::db::{self, NewTranscript};
 use crate::hotkey::HotkeyEvent;
 use crate::paste::{self, PasteResult};
-use crate::stt::{Stt, Vad};
+use crate::stt::{self as sttmod, LangId, Stt, Vad};
 use crate::{cleanup, llm, store};
 use rusqlite::Connection;
 use serde::Serialize;
@@ -64,6 +64,73 @@ struct Job {
 
 /// The loaded model. Settings swaps it when the user picks another one; the worker holds the lock while it transcribes.
 pub static STT: Mutex<Option<Stt>> = Mutex::new(None);
+/// A second model for languages the main one cannot do (Arabic with Parakeet), loaded on first need and kept.
+pub static ALT: Mutex<Option<Stt>> = Mutex::new(None);
+/// Language identification among the user's languages; None until downloaded.
+pub static LID: Mutex<Option<LangId>> = Mutex::new(None);
+/// The speech models folder, set at startup.
+pub static MODELS_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Speech to text on this Mac, limited to the user's languages. Parakeet picks its language itself from 25 European
+/// ones (Russian included) and has no Arabic: German with Arabic names can come out in Cyrillic, Arabic comes out
+/// romanised. Language detection alone misjudges short German sentences full of Arabic names as Arabic, so:
+/// Parakeet first; its text stands when it is in Latin letters and reads like English or German, or when detection
+/// is not sure it was Arabic. Sure Arabic goes to an Arabic model; Cyrillic goes to a model told the language.
+/// Returns the text, the language, and a notice when no model on this Mac can do the language.
+fn transcribe_local(samples: &[f32], cfg: &store::PipelineSettings, prompt: &str) -> anyhow::Result<(String, Option<String>, Option<String>)> {
+    let allowed: Vec<String> = if cfg.candidates.is_empty() { cfg.language.iter().cloned().collect() } else { cfg.candidates.clone() };
+    let mut loaded = STT.lock().unwrap();
+    let stt = loaded.as_mut().ok_or_else(|| anyhow::anyhow!("no speech model yet, open Quietkey to download one"))?;
+    let old_way = |stt: &mut Stt| -> anyhow::Result<(String, Option<String>, Option<String>)> {
+        let (t, l) = if cfg.candidates.is_empty() { (stt.transcribe(samples, cfg.language.as_deref(), prompt)?, cfg.language.clone()) } else { stt.transcribe_among(samples, &cfg.candidates, prompt)? };
+        Ok((t, l, None))
+    };
+    // Whisper takes a language and retries among the user's languages itself; auto-detect means no limit.
+    let Some(main) = stt.model.filter(|m| !m.langs.is_empty() && !allowed.is_empty()) else { return old_way(stt) };
+    let ranked = if allowed.len() == 1 { vec![(allowed[0].clone(), 1.0)] } else { LID.lock().unwrap().as_mut().map(|l| l.rank(samples, &allowed)).unwrap_or_default() };
+    #[cfg(any(test, debug_assertions))]
+    eprintln!("[lang] {ranked:?} main {}", main.id);
+    let Some(top) = ranked.first().cloned() else { return old_way(stt) }; // detection not ready, or clip too short
+
+    let (lang, main_text) = if main.id == "cohere-ar" {
+        // Cohere must be told the language: it keeps Arabic (with English mixed in) unless detection says German.
+        if sttmod::accepts(main, &top.0) || top.0 != "de" {
+            let (t, l) = stt.transcribe_among(samples, &allowed, prompt)?;
+            return Ok((t, l, None));
+        }
+        (top.0, None)
+    } else {
+        let text = stt.transcribe(samples, None, prompt)?;
+        let best_mine = ranked.iter().find(|r| sttmod::accepts(main, &r.0)).map(|r| r.0.clone());
+        let latin = sttmod::script_fits(&text, "en");
+        let sure_arabic = top.0 == "ar" && top.1 >= 0.9;
+        if latin && (!sure_arabic || sttmod::common_word_share(&text) >= 0.2) {
+            return Ok((text, best_mine, None));
+        }
+        match (latin, best_mine) {
+            (true, _) => ("ar".to_string(), Some(text)),
+            // Cyrillic or other letters for a language Parakeet does: Parakeet guessed a wrong language.
+            (false, Some(l)) => (l, Some(text)),
+            (false, None) => return Ok((text, None, None)),
+        }
+    };
+
+    let dir = MODELS_DIR.get().ok_or_else(|| anyhow::anyhow!("models folder not set"))?;
+    let Some(m) = sttmod::fallback_for(&lang, main.id, dir) else {
+        let text = match main_text { Some(t) => t, None => stt.transcribe(samples, None, prompt)? };
+        let note = (lang == "ar").then(|| "For Arabic, download Cohere Transcribe Arabic on the Models page".to_string());
+        return Ok((text, Some(lang), note));
+    };
+    drop(loaded); // the main model is free for the next dictation while the other one runs
+    let mut alt = ALT.lock().unwrap();
+    if alt.as_ref().and_then(|a| a.model).map(|a| a.id) != Some(m.id) {
+        *alt = None; // free the old one before loading the next
+        *alt = Some(Stt::load(&dir.join(m.file))?);
+    }
+    let text = alt.as_mut().unwrap().transcribe(samples, Some(&lang), prompt)?;
+    Ok((text, Some(lang), None))
+}
+
 /// Silero VAD, loaded at startup. None if it failed to load: the loudness check in audio.rs decides then.
 pub static VAD: Mutex<Option<Vad>> = Mutex::new(None);
 
@@ -384,17 +451,14 @@ pub fn process(db: &Mutex<Connection>, samples: &[f32], bundle: Option<&str>) ->
         };
         let t0 = Instant::now();
         let prompt = words.join(", ");
+        let mut notice = None;
         let (raw, language) = if cfg.stt_engine == "groq" {
             (llm::groq_transcribe(samples, cfg.language.as_deref(), &prompt)?, cfg.language.clone())
         } else {
-            // Held only while transcribing: cleanup below may call Groq or Ollama, a model switch need not wait for that.
-            let mut loaded = STT.lock().unwrap();
-            let stt = loaded.as_mut().ok_or_else(|| anyhow::anyhow!("no speech model yet, open Quietkey to download one"))?;
-            if cfg.candidates.is_empty() {
-                (stt.transcribe(samples, cfg.language.as_deref(), &prompt)?, cfg.language.clone())
-            } else {
-                stt.transcribe_among(samples, &cfg.candidates, &prompt)?
-            }
+            // The model locks are held only while transcribing: cleanup below may call Groq or Ollama.
+            let (t, l, n) = transcribe_local(samples, &cfg, &prompt)?;
+            notice = n;
+            (t, l)
         };
         #[cfg(debug_assertions)]
         eprintln!("[timing] transcribe {:?} for {:.1}s audio", t0.elapsed(), samples.len() as f32 / 16_000.0);
@@ -405,7 +469,6 @@ pub fn process(db: &Mutex<Connection>, samples: &[f32], bundle: Option<&str>) ->
         let (with_ph, expansions) = cleanup::insert_placeholders(&raw, &snippets);
         let corrected = cleanup::apply_corrections(&with_ph, &fixes);
         let mut text = if cfg.cleanup_level == "none" { corrected.clone() } else { cleanup::local_cleanup(&corrected) };
-        let mut notice = None;
         let mut llm_used = false;
 
         if cfg.cleanup_level != "none" && cfg.llm_provider != "none" && text.split_whitespace().count() >= 4 {
@@ -492,4 +555,34 @@ pub struct Processed {
     pub language: Option<String>,
     pub storage_mode: String,
     pub fixes: i64,
+}
+
+#[cfg(test)]
+mod routing_bench {
+    /// The language routing with the real models: Parakeet main, detection among en/de/ar, Cohere for Arabic.
+    /// Run: QUIETKEY_FIXTURES=<dir of 16 kHz WAVs> cargo test --release --lib routing -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn routing() {
+        let dir = std::path::PathBuf::from(std::env::var("QUIETKEY_FIXTURES").unwrap());
+        let models = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("Library/Application Support/dev.abdallah.quietkey/models");
+        let _ = super::MODELS_DIR.set(models.clone());
+        *super::STT.lock().unwrap() = Some(super::Stt::load(&models.join("parakeet-tdt-0.6b-v3-Q8_0.gguf")).unwrap());
+        *super::LID.lock().unwrap() = Some(super::LangId::load(&models).unwrap());
+        let cfg = crate::store::PipelineSettings {
+            cleanup_level: "none".into(), llm_provider: "none".into(), groq_model: String::new(), ollama_model: String::new(),
+            ollama_url: String::new(), storage_mode: "store".into(), language: None,
+            candidates: vec!["en".into(), "de".into(), "ar".into()], stt_engine: "local".into(),
+        };
+        let mut names: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wav")).collect();
+        names.sort();
+        for p in names {
+            let mut r = hound::WavReader::open(&p).unwrap();
+            let a: Vec<f32> = r.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
+            let t = std::time::Instant::now();
+            let (text, lang, note) = super::transcribe_local(&a, &cfg, "").unwrap();
+            println!("{:10} {:4.1}s {:>5} ms {:?} {text} {}", p.file_stem().unwrap().to_string_lossy(), a.len() as f32 / 16000.0, t.elapsed().as_millis(), lang.unwrap_or_default(), note.unwrap_or_default());
+            assert!(!text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)), "Cyrillic in {text}");
+        }
+    }
 }

@@ -17,6 +17,96 @@ pub struct Model {
     pub grades: &'static [(&'static str, &'static str)],
     /// 1 (slow) to 4 (fastest), measured on an M1.
     pub speed: u8,
+    /// Languages it transcribes; empty = any (Whisper).
+    #[serde(skip)]
+    pub langs: &'static [&'static str],
+}
+
+/// Parakeet v3's 25 European languages (NVIDIA model card).
+const PARAKEET_LANGS: &[&str] = &[
+    "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro",
+    "sk", "sl", "es", "sv", "ru", "uk",
+];
+
+pub fn accepts(m: &Model, lang: &str) -> bool {
+    m.langs.is_empty() || m.langs.contains(&lang)
+}
+
+/// True when `text` is written in the alphabet `lang` uses. Catches Parakeet writing German speech in Cyrillic.
+/// Only checks Latin-script languages and Arabic; others always pass.
+pub fn script_fits(text: &str, lang: &str) -> bool {
+    let mut letters = text.chars().filter(|c| c.is_alphabetic()).peekable();
+    if letters.peek().is_none() {
+        return true;
+    }
+    match lang {
+        "ar" | "fa" | "ur" => text.chars().any(|c| ('\u{0600}'..='\u{06FF}').contains(&c)),
+        "ru" | "uk" | "bg" | "el" | "zh" | "ja" | "ko" | "hi" => true,
+        // Latin, Latin-1, Latin Extended A/B and Additional: ä ö ü ß é ł ...
+        _ => letters.all(|c| (c as u32) < 0x250 || (0x1E00..0x1F00).contains(&(c as u32))),
+    }
+}
+
+/// Share of words that are everyday English or German words. Parakeet's romanised Arabic ("Marhaban, Ismi ...")
+/// scores near 0, real English or German sentences 0.2 and up, even when full of Arabic names.
+pub fn common_word_share(text: &str) -> f32 {
+    const COMMON: &[&str] = &[
+        // English
+        "i", "you", "he", "she", "it", "we", "they", "is", "are", "was", "be", "the", "a", "an", "and", "or", "of", "to",
+        "in", "on", "at", "for", "with", "my", "your", "this", "that", "what", "not", "do", "have", "has", "me", "yes", "no",
+        "can", "will", "so", "but", "if", "i'm", "it's", "please", "thanks",
+        // German
+        "ich", "du", "er", "sie", "es", "wir", "ihr", "bin", "bist", "ist", "sind", "war", "der", "die", "das", "den",
+        "dem", "ein", "eine", "einen", "und", "oder", "mit", "von", "zu", "im", "in", "auf", "für", "seit", "nicht", "mein",
+        "meine", "dein", "wie", "was", "ja", "nein", "aber", "auch", "noch", "schon", "um", "aus", "bei", "nach", "habe",
+        "hat", "haben", "wird", "kann", "danke", "bitte",
+    ];
+    let words: Vec<String> = text.split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'').to_lowercase()).filter(|w| !w.is_empty()).collect();
+    if words.is_empty() {
+        return 0.0;
+    }
+    words.iter().filter(|w| COMMON.contains(&w.as_str())).count() as f32 / words.len() as f32
+}
+
+/// Which model to fall back to for `lang` when the main one cannot do it: an Arabic model for Arabic, else
+/// Parakeet, else the biggest Whisper. Only models whose file is in `dir`, never `main` itself.
+pub fn fallback_for(lang: &str, main: &str, dir: &Path) -> Option<&'static Model> {
+    let order: &[&str] = if lang == "ar" { &["cohere-ar", "large-v3-turbo", "small", "base"] } else { &["parakeet-v3", "large-v3-turbo", "small", "base", "cohere-ar"] };
+    order.iter().filter_map(|id| MODELS.iter().find(|m| m.id == *id)).find(|m| m.id != main && accepts(m, lang) && dir.join(m.file).exists())
+}
+
+/// Language identification (VoxLingua107 ECAPA, Apache-2.0, 27 MB), downloaded next to the speech models.
+/// Restricted to the user's languages, it decides which model hears the clip.
+const LANGID: Model = Model {
+    id: "langid",
+    label: "Language detection",
+    file: "lang-id-voxlingua107-ecapa-Q8_0.gguf",
+    url: "https://huggingface.co/handy-computer/lang-id-voxlingua107-ecapa-gguf/resolve/e59f0f3847e77723b7d58447ef9456fa0c7e9436/",
+    size_mb: 27,
+    ram_mb: 30,
+    note: "",
+    grades: &[],
+    speed: 4,
+    langs: &[],
+};
+
+pub struct LangId {
+    session: transcribe_cpp::LangIdSession,
+}
+
+impl LangId {
+    /// Downloads the model on first use (blocking: call from a background thread), then loads it.
+    pub fn load(dir: &Path) -> anyhow::Result<Self> {
+        let path = download(&LANGID, dir, |_, _| {})?;
+        let m = transcribe_cpp::Model::load(&path).map_err(|e| anyhow::anyhow!("language ID load failed: {e}"))?;
+        Ok(Self { session: m.langid_session().map_err(|e| anyhow::anyhow!("{e}"))? })
+    }
+
+    /// `allowed` ranked with probabilities, or empty when the clip is too short to tell or the run fails.
+    pub fn rank(&mut self, samples: &[f32], allowed: &[String]) -> Vec<(String, f32)> {
+        let opts = transcribe_cpp::LangIdOptions { allowed: Some(allowed.to_vec()) };
+        self.session.run(samples, &opts).map(|r| r.candidates.into_iter().map(|c| (c.code, c.p)).collect()).unwrap_or_default()
+    }
 }
 
 const WHISPER_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
@@ -33,6 +123,7 @@ pub const MODELS: &[Model] = &[
         note: "Fastest and very accurate. English, German and 23 more European languages, picks the language itself. Ignores dictionary hints",
         grades: &[("en", "A-"), ("de", "B+"), ("ar", "-")],
         speed: 4,
+        langs: PARAKEET_LANGS,
     },
     Model {
         id: "cohere-ar",
@@ -45,19 +136,55 @@ pub const MODELS: &[Model] = &[
         note: "Best for Arabic, including dialects. English words inside Arabic speech come out in Arabic letters. Slower, 1.6 GB",
         grades: &[("en", "B+"), ("de", "-"), ("ar", "A")],
         speed: 2,
+        langs: &["ar", "en"],
     },
     Model { id: "base", label: "Whisper Base", file: "ggml-base-q5_1.bin", url: WHISPER_URL, size_mb: 60, ram_mb: 180, note: "Small download, for older Macs. Misses more words",
-        grades: &[("en", "C+"), ("de", "D"), ("ar", "F")], speed: 4 },
+        grades: &[("en", "C+"), ("de", "D"), ("ar", "F")], speed: 4, langs: &[] },
     Model { id: "small", label: "Whisper Small", file: "ggml-small-q5_1.bin", url: WHISPER_URL, size_mb: 190, ram_mb: 350, note: "Good for clear English",
-        grades: &[("en", "B"), ("de", "C+"), ("ar", "D")], speed: 3 },
+        grades: &[("en", "B"), ("de", "C+"), ("ar", "D")], speed: 3, langs: &[] },
     Model { id: "large-v3-turbo", label: "Whisper Large v3 Turbo", file: "ggml-large-v3-turbo-q5_0.bin", url: WHISPER_URL, size_mb: 574, ram_mb: 700, note: "99 languages, including Arabic. Slower, uses dictionary words as hints",
-        grades: &[("en", "A-"), ("de", "A-"), ("ar", "C")], speed: 2 },
+        grades: &[("en", "A-"), ("de", "A-"), ("ar", "C")], speed: 2, langs: &[] },
 ];
 
 /// The model for a settings value; unknown values get the default (Parakeet). Benches only.
 #[cfg(test)]
 mod catalog_tests {
     use super::*;
+
+    #[test]
+    fn common_words_tell_german_from_romanised_arabic() {
+        assert!(common_word_share("Dalani is verheiratet mit Hannah Al Halavani seit sechs Jahren.") >= 0.2);
+        assert!(common_word_share("Ich bin updala need") >= 0.2);
+        assert!(common_word_share("Marhaban, Ismi Abda allih, Uridu and Ahjzi Mawidan Yaum Al-Khamis Sa'") < 0.2);
+        assert!(common_word_share("Andi meetang ma'alfariku bikura, wa bwadajn il-lazim ar salalar repart") < 0.2);
+    }
+
+    #[test]
+    fn script_check_catches_cyrillic_german_and_romanised_arabic() {
+        assert!(!script_fits("Ишпин Абдалла Аллани ду.", "de"));
+        assert!(script_fits("Grüße aus München, Straße.", "de"));
+        assert!(script_fits("Ich bin Abdallah.", "de"));
+        assert!(!script_fits("Marhaban, Ismi Abda allih", "ar"));
+        assert!(script_fits("مرحبا، اسمي عبدالله", "ar"));
+        assert!(script_fits("", "de"));
+    }
+
+    #[test]
+    fn fallback_picks_an_arabic_model_for_arabic_and_never_the_main_one() {
+        let dir = std::env::temp_dir().join(format!("qk-fallback-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let touch = |id: &str| std::fs::write(dir.join(MODELS.iter().find(|m| m.id == id).unwrap().file), b"").unwrap();
+        assert!(fallback_for("ar", "parakeet-v3", &dir).is_none()); // nothing downloaded
+        touch("parakeet-v3");
+        touch("large-v3-turbo");
+        assert_eq!(fallback_for("ar", "parakeet-v3", &dir).unwrap().id, "large-v3-turbo");
+        touch("cohere-ar");
+        assert_eq!(fallback_for("ar", "parakeet-v3", &dir).unwrap().id, "cohere-ar");
+        assert_eq!(fallback_for("de", "parakeet-v3", &dir).unwrap().id, "large-v3-turbo"); // Cyrillic retry
+        assert_eq!(fallback_for("de", "cohere-ar", &dir).unwrap().id, "parakeet-v3");
+        assert!(!accepts(MODELS.iter().find(|m| m.id == "parakeet-v3").unwrap(), "ar"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn every_model_is_graded_for_en_de_ar_with_a_speed() {
@@ -140,6 +267,8 @@ pub struct Stt {
     whisper: bool,
     /// Models that cannot detect the language (Cohere) must be told one: its supported languages, best first.
     fixed: Vec<String>,
+    /// The catalog entry, found by file name; None for a file not in the catalog.
+    pub model: Option<&'static Model>,
 }
 
 impl Stt {
@@ -150,7 +279,8 @@ impl Stt {
         let caps = m.capabilities().map_err(|e| anyhow::anyhow!("{e}"))?;
         let fixed = if caps.supports_language_detect { Vec::new() } else { fixed_languages(caps.languages) };
         let session = m.session().map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(Self { session, whisper, fixed })
+        let file = model.file_name().and_then(|f| f.to_str());
+        Ok(Self { session, whisper, fixed, model: MODELS.iter().find(|m| Some(m.file) == file) })
     }
 
     /// `language` None = auto-detect. `prompt` biases spelling (dictionary words). Parakeet ignores both.
@@ -432,7 +562,7 @@ mod ctx_bench {
         let mut stt = super::Stt::load(&model).unwrap();
         {
             let names: Vec<(&str, Option<&str>)> = match std::env::var("QUIETKEY_BENCH_ONLY") {
-                Ok(only) => only.split(',').map(|n| (Box::leak(n.to_string().into_boxed_str()) as &str, Some("en"))).collect(),
+                Ok(only) => only.split(',').map(|n| (Box::leak(n.to_string().into_boxed_str()) as &str, Some(&*Box::leak(std::env::var("QK_LANG").unwrap_or("en".into()).into_boxed_str())))).collect(),
                 Err(_) => vec![("long", Some("en")), ("short", Some("en")), ("raw", Some("en")), ("german", Some("de")), ("speech", Some("en"))],
             };
             for (n, lang) in names {

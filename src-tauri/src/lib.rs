@@ -475,6 +475,10 @@ fn model_delete(app: AppHandle, state: State<AppState>, id: String) -> CmdResult
     if stt::active(store::model_choice(&state.db.lock().unwrap()).as_deref(), &dir).id == m.id {
         return Err("That model is in use. Switch to another model first".into());
     }
+    let mut alt = pipeline::ALT.lock().unwrap();
+    if alt.as_ref().and_then(|a| a.model).map(|a| a.id) == Some(m.id) {
+        *alt = None;
+    }
     match std::fs::remove_file(dir.join(m.file)) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(err(e)),
         _ => Ok(()),
@@ -549,6 +553,13 @@ pub fn run() {
             let choice = store::model_choice(&db.lock().unwrap());
             let models = data.join("models");
             let model = models.join(stt::active(choice.as_deref(), &models).file);
+            let _ = pipeline::MODELS_DIR.set(models.clone());
+            // Language detection: downloaded once (27 MB) in its own thread so dictation never waits for it.
+            let lid_dir = models.clone();
+            std::thread::Builder::new().name("langid".into()).spawn(move || match stt::LangId::load(&lid_dir) {
+                Ok(l) => *pipeline::LID.lock().unwrap() = Some(l),
+                Err(e) => eprintln!("language detection unavailable: {e}"),
+            })?;
             std::thread::Builder::new().name("pipeline".into()).spawn(move || {
                 match stt::Vad::load(&models) {
                     Ok(v) => *pipeline::VAD.lock().unwrap() = Some(v),
