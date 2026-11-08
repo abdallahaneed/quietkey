@@ -12,6 +12,11 @@ pub struct Model {
     pub size_mb: u32,
     pub ram_mb: u32,
     pub note: &'static str,
+    /// School grades for the languages the app's users pick most, "-" = not supported. Judged from published
+    /// FLEURS word error rates and tests on this Mac; shown on the Models page.
+    pub grades: &'static [(&'static str, &'static str)],
+    /// 1 (slow) to 4 (fastest), measured on an M1.
+    pub speed: u8,
 }
 
 const WHISPER_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
@@ -26,13 +31,51 @@ pub const MODELS: &[Model] = &[
         size_mb: 740,
         ram_mb: 230,
         note: "Fastest and very accurate. English, German and 23 more European languages, picks the language itself. Ignores dictionary hints",
+        grades: &[("en", "A-"), ("de", "B+"), ("ar", "-")],
+        speed: 4,
     },
-    Model { id: "base", label: "Whisper Base", file: "ggml-base-q5_1.bin", url: WHISPER_URL, size_mb: 60, ram_mb: 180, note: "Small download, for older Macs. Misses more words" },
-    Model { id: "small", label: "Whisper Small", file: "ggml-small-q5_1.bin", url: WHISPER_URL, size_mb: 190, ram_mb: 350, note: "Good for clear English" },
-    Model { id: "large-v3-turbo", label: "Whisper Large v3 Turbo", file: "ggml-large-v3-turbo-q5_0.bin", url: WHISPER_URL, size_mb: 574, ram_mb: 700, note: "99 languages, including Arabic. Slower, uses dictionary words as hints" },
+    Model {
+        id: "cohere-ar",
+        label: "Cohere Transcribe Arabic",
+        file: "cohere-transcribe-arabic-07-2026-Q4_K_M.gguf",
+        // Apache-2.0. Q4_K_M: same Arabic word error rate as Q8_0 (11.2 vs 11.1 on FLEURS) at 1.6 instead of 2.4 GB.
+        url: "https://huggingface.co/handy-computer/cohere-transcribe-arabic-07-2026-gguf/resolve/11a54d6895f94cce78d0ece142b8e552e7822539/",
+        size_mb: 1560,
+        ram_mb: 100, // measured like the others (resident memory added); the weights are memory-mapped
+        note: "Best for Arabic, including dialects. English words inside Arabic speech come out in Arabic letters. Slower, 1.6 GB",
+        grades: &[("en", "B+"), ("de", "-"), ("ar", "A")],
+        speed: 2,
+    },
+    Model { id: "base", label: "Whisper Base", file: "ggml-base-q5_1.bin", url: WHISPER_URL, size_mb: 60, ram_mb: 180, note: "Small download, for older Macs. Misses more words",
+        grades: &[("en", "C+"), ("de", "D"), ("ar", "F")], speed: 4 },
+    Model { id: "small", label: "Whisper Small", file: "ggml-small-q5_1.bin", url: WHISPER_URL, size_mb: 190, ram_mb: 350, note: "Good for clear English",
+        grades: &[("en", "B"), ("de", "C+"), ("ar", "D")], speed: 3 },
+    Model { id: "large-v3-turbo", label: "Whisper Large v3 Turbo", file: "ggml-large-v3-turbo-q5_0.bin", url: WHISPER_URL, size_mb: 574, ram_mb: 700, note: "99 languages, including Arabic. Slower, uses dictionary words as hints",
+        grades: &[("en", "A-"), ("de", "A-"), ("ar", "C")], speed: 2 },
 ];
 
 /// The model for a settings value; unknown values get the default (Parakeet). Benches only.
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+
+    #[test]
+    fn every_model_is_graded_for_en_de_ar_with_a_speed() {
+        for m in MODELS {
+            let langs: Vec<_> = m.grades.iter().map(|g| g.0).collect();
+            assert_eq!(langs, ["en", "de", "ar"], "{}", m.id);
+            assert!((1..=4).contains(&m.speed), "{}", m.id);
+            assert!(m.grades.iter().all(|g| g.1 == "-" || "ABCDF".contains(&g.1[..1])), "{}", m.id);
+        }
+    }
+
+    #[test]
+    fn arabic_first_for_models_that_cannot_detect() {
+        assert_eq!(fixed_languages(vec!["en".into(), "ar".into()]), ["ar", "en"]);
+        assert_eq!(fixed_languages(vec!["en".into()]), ["en"]);
+    }
+}
+
 #[cfg(test)]
 pub fn model(id: Option<&str>) -> &'static Model {
     MODELS.iter().find(|m| Some(m.id) == id).unwrap_or(&MODELS[0])
@@ -95,6 +138,8 @@ pub struct Stt {
     session: Session,
     /// Whisper takes a language hint and an initial prompt; Parakeet detects the language and takes neither.
     whisper: bool,
+    /// Models that cannot detect the language (Cohere) must be told one: its supported languages, best first.
+    fixed: Vec<String>,
 }
 
 impl Stt {
@@ -102,8 +147,10 @@ impl Stt {
         let _ = transcribe_cpp::disable_logging(); // it prints every buffer allocation to stderr
         let m = transcribe_cpp::Model::load(model).map_err(|e| anyhow::anyhow!("model load failed: {e}"))?;
         let whisper = m.arch() == "whisper";
+        let caps = m.capabilities().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let fixed = if caps.supports_language_detect { Vec::new() } else { fixed_languages(caps.languages) };
         let session = m.session().map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(Self { session, whisper })
+        Ok(Self { session, whisper, fixed })
     }
 
     /// `language` None = auto-detect. `prompt` biases spelling (dictionary words). Parakeet ignores both.
@@ -115,6 +162,13 @@ impl Stt {
     /// first one. Returns the text and the language used. A separate detection pass would cost ~2 s every time.
     /// Parakeet cannot be told a language, so its first result stands.
     pub fn transcribe_among(&mut self, samples: &[f32], candidates: &[String], prompt: &str) -> anyhow::Result<(String, Option<String>)> {
+        if !self.fixed.is_empty() {
+            // No detection: the model's main language. Cohere Arabic in Arabic mode also writes the English words
+            // mixed in, while English mode drops Arabic, so a user who speaks both gets Arabic mode.
+            let l = self.fixed[0].clone();
+            let (text, _) = self.run(samples, Some(&l), prompt)?;
+            return Ok((text, Some(l)));
+        }
         let (text, heard) = self.run(samples, None, prompt)?;
         if !self.whisper {
             return Ok((text, heard));
@@ -129,6 +183,10 @@ impl Stt {
     fn run(&mut self, samples: &[f32], language: Option<&str>, prompt: &str) -> anyhow::Result<(String, Option<String>)> {
         let mut opts = RunOptions::default();
         let mut audio = samples.to_vec();
+        if !self.fixed.is_empty() {
+            let l = language.filter(|l| self.fixed.iter().any(|f| f == l)).unwrap_or(self.fixed[0].as_str());
+            opts.language = Some(l.to_string());
+        }
         if self.whisper {
             opts.language = language.map(str::to_string);
             if !prompt.is_empty() {
@@ -182,6 +240,13 @@ impl Vad {
 fn speech_span(segs: &[(usize, usize)], len: usize) -> Option<std::ops::Range<usize>> {
     let (first, last) = (segs.first()?.0, segs.last()?.1);
     Some(first.saturating_sub(PAD).min(len)..last.saturating_add(PAD).min(len))
+}
+
+/// A no-detection model's languages with Arabic first: the Arabic models also take English, but code-switched
+/// Arabic and English speech is transcribed best in Arabic mode.
+fn fixed_languages(mut langs: Vec<String>) -> Vec<String> {
+    langs.sort_by_key(|l| l != "ar");
+    langs
 }
 
 /// The language to transcribe again in, or None when what Whisper heard is one of the user's languages.
@@ -333,6 +398,25 @@ mod mixed_bench {
 
 #[cfg(test)]
 mod ctx_bench {
+    /// Cohere Arabic end to end: Arabic speech, and Arabic with English words, in a multi-language setup.
+    /// Run: QUIETKEY_FIXTURES=<dir with arabic.wav, mixed.wav> cargo test --release --lib cohere_arabic -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn cohere_arabic() {
+        let dir = std::path::PathBuf::from(std::env::var("QUIETKEY_FIXTURES").unwrap());
+        let home = std::env::var("HOME").unwrap();
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(Some("cohere-ar")).file);
+        let mut stt = super::Stt::load(&model).unwrap();
+        for n in ["arabic", "mixed"] {
+            let mut r = hound::WavReader::open(dir.join(format!("{n}.wav"))).unwrap();
+            let a: Vec<f32> = r.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
+            let t = std::time::Instant::now();
+            let (out, lang) = stt.transcribe_among(&a, &["en".into(), "de".into()], "").unwrap();
+            println!("{n:7} {:4.1}s audio {:>6} ms {lang:?} {out}", a.len() as f32 / 16000.0, t.elapsed().as_millis());
+            assert!(out.chars().any(|c| ('\u{0600}'..='\u{06FF}').contains(&c)), "no Arabic in {out}");
+        }
+    }
+
     /// Quality and speed per fixture, long clip first (reproduces the suite order). QK_MODEL picks the model.
     /// Run: QUIETKEY_FIXTURES=../scripts/e2e/fixtures cargo test --release --lib ctx_bench -- --ignored --nocapture
     #[test]

@@ -1,7 +1,7 @@
 // Shared UI primitives on Radix. Colours come from the token classes only, never raw hex.
-import { forwardRef, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
+import { forwardRef, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { Dialog, DropdownMenu, RadioGroup, Select, Switch as RSwitch, Tooltip } from "radix-ui";
-import { Check, ChevronDown, Loader2, Lock } from "lucide-react";
+import { Check, ChevronDown, Info, Loader2, Lock, Pause, Play, RotateCcw } from "lucide-react";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
@@ -238,12 +238,12 @@ export function Modal({
 
 /* Dropdown menu ------------------------------------------------------------ */
 
-export function Menu({ trigger, items }: { trigger: ReactNode; items: { label: string; onSelect: () => void; danger?: boolean; disabled?: boolean }[] }) {
+export function Menu({ trigger, items, align = "end", side = "bottom" }: { trigger: ReactNode; items: { label: string; onSelect: () => void; danger?: boolean; disabled?: boolean; checked?: boolean }[]; align?: "start" | "end"; side?: "top" | "bottom" }) {
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content align="end" sideOffset={4} className="z-50 min-w-40 rounded-md border border-border bg-bg p-1 shadow-pop">
+        <DropdownMenu.Content align={align} side={side} sideOffset={4} className="z-50 min-w-40 rounded-md border border-border bg-bg p-1 shadow-pop">
           {items.map((i) => (
             <DropdownMenu.Item
               key={i.label}
@@ -251,12 +251,132 @@ export function Menu({ trigger, items }: { trigger: ReactNode; items: { label: s
               onSelect={i.onSelect}
               className={cx("flex h-7 items-center rounded-sm px-2 text-base outline-none data-[highlighted]:bg-accent-soft data-[disabled]:opacity-40", i.danger && "text-danger")}
             >
-              {i.label}
+              <span className="flex-1">{i.label}</span>
+              {i.checked && <Check className="ml-4 size-4 text-accent" aria-hidden />}
             </DropdownMenu.Item>
           ))}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
+  );
+}
+
+/* Settings layout: groups of rows ------------------------------------------ */
+
+/** A titled card of rows. The small upper-case title names the group; rows are divided by hairlines. */
+export function Group({ id, title, description, action, children }: { id: string; title: string; description?: ReactNode; action?: ReactNode; children: ReactNode }) {
+  return (
+    <section aria-labelledby={id} className="mb-6">
+      <div className="mb-1.5 flex min-h-6 items-end justify-between gap-4 px-1">
+        <h2 id={id} className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h2>
+        {action}
+      </div>
+      {description && <p className="mb-2 px-1 text-sm text-muted">{description}</p>}
+      <div className="divide-y divide-border rounded-lg border border-border bg-surface">{children}</div>
+    </section>
+  );
+}
+
+/** An (i) icon that shows `text` on hover or focus. */
+export function InfoTip({ label, text }: { label: string; text: string }) {
+  return (
+    <Tooltip.Provider delayDuration={200}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button type="button" aria-label={`About ${label}`} className="inline-flex size-5 items-center justify-center rounded-pill text-muted hover:text-fg">
+            <Info className="size-3.5" aria-hidden />
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content side="top" sideOffset={4} className="z-50 max-w-72 rounded-sm bg-fg px-2 py-1.5 text-xs text-bg shadow-pop">{text}</Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
+  );
+}
+
+/**
+ * One setting: label and (i) on the left, the control on the right, and a reset arrow when the setting has a
+ * default (`onReset`, disabled while the value already is the default). `below` holds content under the row.
+ */
+export function Row({ label, info, onReset, isDefault, children, below }: {
+  label: string; info?: string; onReset?: () => void; isDefault?: boolean; children?: ReactNode; below?: ReactNode;
+}) {
+  return (
+    <div className="px-4 py-2.5">
+      <div className="flex min-h-8 items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="text-base font-medium">{label}</span>
+          {info && <InfoTip label={label} text={info} />}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {children}
+          {onReset && (
+            <IconButton label={`Reset ${label.toLowerCase()} to default`} onClick={onReset} disabled={isDefault} className="disabled:opacity-30 disabled:hover:bg-transparent">
+              <RotateCcw className="size-4" />
+            </IconButton>
+          )}
+        </div>
+      </div>
+      {below && <div className="mt-2">{below}</div>}
+    </div>
+  );
+}
+
+/** A bare switch for the right side of a Row. */
+export function Toggle({ label, checked, onChange, disabled }: { label: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <RSwitch.Root
+      aria-label={label}
+      checked={checked}
+      onCheckedChange={onChange}
+      disabled={disabled}
+      className="relative h-5 w-9 shrink-0 rounded-pill border border-border bg-surface-2 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:opacity-40"
+    >
+      <RSwitch.Thumb className="block size-4 translate-x-0.5 rounded-pill bg-white shadow-card transition-transform data-[state=checked]:translate-x-[17px]" />
+    </RSwitch.Root>
+  );
+}
+
+/* Audio player ----------------------------------------------------------------- */
+
+const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+/** Play button, seek bar and times. The audio is fetched on the first press, so a long list loads no audio. */
+export function AudioPlayer({ load, duration }: { load: () => Promise<Blob>; duration: number }) {
+  const ref = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [pos, setPos] = useState(0);
+  const [error, setError] = useState(false);
+  const [dur, setDur] = useState(duration); // the saved clip is trimmed to the speech, so the file knows better
+  useEffect(() => () => { const a = ref.current; if (a) { a.pause(); URL.revokeObjectURL(a.src); } }, []);
+  const toggle = async () => {
+    try {
+      if (!ref.current) {
+        const a = new Audio(URL.createObjectURL(await load()));
+        a.ontimeupdate = () => setPos(a.currentTime);
+        a.onloadedmetadata = () => Number.isFinite(a.duration) && setDur(a.duration);
+        a.onended = () => { setPlaying(false); setPos(0); };
+        ref.current = a;
+      }
+      const a = ref.current;
+      if (a.paused) { await a.play(); setPlaying(true); } else { a.pause(); setPlaying(false); }
+    } catch { setError(true); }
+  };
+  if (error) return <p className="text-xs text-muted">Recording not available.</p>;
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted">
+      <IconButton label={playing ? "Pause recording" : "Play recording"} onClick={toggle} className="text-fg">
+        {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+      </IconButton>
+      <span className="w-8 tabular-nums">{mmss(pos)}</span>
+      <input
+        type="range" aria-label="Position" min={0} max={dur} step={0.1} value={pos}
+        onChange={(e) => { const v = Number(e.target.value); setPos(v); if (ref.current) ref.current.currentTime = v; }}
+        className="h-1 flex-1 accent-accent"
+      />
+      <span className="w-8 tabular-nums">{mmss(dur)}</span>
+    </div>
   );
 }
 

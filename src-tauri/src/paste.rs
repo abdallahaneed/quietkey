@@ -278,8 +278,8 @@ pub fn paste_text(text: &str) -> PasteResult {
         return PasteResult::Failed(e);
     }
     // Slow targets (Chrome, Electron) read the pasteboard late; restoring too early pastes the old content.
-    // TODO: fixed 500 ms wait, upgrade to per-app timing if pastes go missing in specific apps.
-    std::thread::sleep(Duration::from_millis(500));
+    // shortcut: fixed 150 ms (was 500; Handy uses 60), per-app timing if pastes go missing in specific apps.
+    std::thread::sleep(Duration::from_millis(150));
     let now = pb.changeCount();
     #[cfg(debug_assertions)]
     eprintln!("[paste] changeCount ours={ours} now={now} saved_items={}", saved.0.len());

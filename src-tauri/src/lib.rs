@@ -57,13 +57,69 @@ fn copy_last(state: State<AppState>) -> CmdResult<bool> {
 }
 
 #[tauri::command]
-fn transcript_delete(state: State<AppState>, id: String) -> CmdResult<usize> {
-    store::delete_many(&state.db.lock().unwrap(), "transcripts", &[id]).map_err(err)
+fn transcript_delete(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<usize> {
+    let conn = state.db.lock().unwrap();
+    let n = store::delete_many(&conn, "transcripts", &[id]).map_err(err)?;
+    pipeline::prune_recordings(&app, &conn);
+    Ok(n)
 }
 
 #[tauri::command]
-fn data_delete(state: State<AppState>, categories: Vec<String>, confirm: String) -> CmdResult<serde_json::Value> {
-    store::data_delete(&state.db.lock().unwrap(), &categories, &confirm)
+fn data_delete(app: AppHandle, state: State<AppState>, categories: Vec<String>, confirm: String) -> CmdResult<serde_json::Value> {
+    let conn = state.db.lock().unwrap();
+    let out = store::data_delete(&conn, &categories, &confirm)?;
+    pipeline::prune_recordings(&app, &conn);
+    Ok(out)
+}
+
+#[tauri::command]
+fn transcript_favorite(state: State<AppState>, id: String, on: bool) -> CmdResult<()> {
+    db::set_favorite(&state.db.lock().unwrap(), &id, on).map(|_| ()).map_err(err)
+}
+
+/// The saved recording as WAV bytes (an ArrayBuffer in JS, not a JSON number array).
+#[tauri::command]
+fn transcript_audio(state: State<AppState>, id: String) -> CmdResult<tauri::ipc::Response> {
+    let path = db::audio_path(&state.db.lock().unwrap(), &id).map_err(err)?.ok_or("No recording saved for this dictation")?;
+    Ok(tauri::ipc::Response::new(std::fs::read(path).map_err(err)?))
+}
+
+/// Runs the saved recording through the current model and cleanup again and stores the new text in the same entry.
+#[tauri::command]
+async fn transcript_retranscribe(state: State<'_, AppState>, id: String) -> CmdResult<db::Transcript> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<db::Transcript> {
+        let (t, path) = {
+            let c = db.lock().unwrap();
+            (db::get_transcript(&c, &id)?, db::audio_path(&c, &id)?)
+        };
+        let path = path.ok_or_else(|| anyhow::anyhow!("no recording saved for this dictation"))?;
+        let samples = audio::wav_samples(&std::fs::read(path)?)?;
+        let out = pipeline::process(&db, &samples, t.app_bundle_id.as_deref())?;
+        anyhow::ensure!(!out.final_text.is_empty(), "the model heard nothing in this recording");
+        Ok(db::update_text(&db.lock().unwrap(), &id, &out.raw, &out.final_text, out.language.as_deref(), &out.cleanup_level)?)
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
+}
+
+/// Writes the entry's text to "Quietkey <date> <time>.txt" in Downloads, shows it in Finder, returns the path.
+// shortcut: fixed folder instead of a save dialog (would need tauri-plugin-dialog); add the dialog if people ask.
+#[tauri::command]
+fn transcript_save(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<String> {
+    use tauri_plugin_opener::OpenerExt;
+    let t = db::get_transcript(&state.db.lock().unwrap(), &id).map_err(err)?;
+    let when = chrono::DateTime::from_timestamp_millis(t.created_at).ok_or("bad date")?.with_timezone(&chrono::Local);
+    let dir = app.path().download_dir().map_err(err)?;
+    let stem = format!("Quietkey {}", when.format("%Y-%m-%d %H-%M"));
+    let path = (1..100)
+        .map(|n| dir.join(if n == 1 { format!("{stem}.txt") } else { format!("{stem} {n}.txt") }))
+        .find(|p| !p.exists())
+        .ok_or("Too many files with this name in Downloads")?;
+    std::fs::write(&path, format!("{}\n", t.final_text)).map_err(err)?;
+    let _ = app.opener().reveal_item_in_dir(&path);
+    Ok(path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -92,6 +148,7 @@ fn settings_update(app: AppHandle, state: State<AppState>, patch: serde_json::Ma
     // Switching to a stricter retention mode applies right away, not at the next hourly run.
     if patch.contains_key("storage_mode") {
         let _ = store::retention_purge(&conn, out["storage_mode"].as_str().unwrap_or("store"), db::now_ms());
+        pipeline::prune_recordings(&app, &conn);
     }
     Ok(out)
 }
@@ -407,6 +464,23 @@ fn models_list(app: AppHandle, state: State<AppState>) -> CmdResult<Vec<serde_js
 
 static SWITCHING: AtomicBool = AtomicBool::new(false);
 
+/// Deletes a downloaded model file to free the space. The model in use cannot be deleted.
+#[tauri::command]
+fn model_delete(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
+    let m = stt::MODELS.iter().find(|m| m.id == id).ok_or("Unknown model")?;
+    let dir = app.path().app_data_dir().map_err(err)?.join("models");
+    if SWITCHING.load(Ordering::SeqCst) {
+        return Err("Wait until the model switch has finished".into());
+    }
+    if stt::active(store::model_choice(&state.db.lock().unwrap()).as_deref(), &dir).id == m.id {
+        return Err("That model is in use. Switch to another model first".into());
+    }
+    match std::fs::remove_file(dir.join(m.file)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(err(e)),
+        _ => Ok(()),
+    }
+}
+
 /// Downloads (if needed) and loads model `id` in the background, then saves it as the choice. Progress arrives on
 /// "model://progress" {id, done, total}; the end on "model://ready" {id} or "model://error" {id, message}.
 #[tauri::command]
@@ -465,6 +539,7 @@ pub fn run() {
             let conn = db::open(&data.join("app.db"))?;
             let db = Arc::new(Mutex::new(conn));
             let jobs_db = db.clone();
+            let jobs_app = app.handle().clone();
 
             let (tx, rx) = mpsc::channel::<Input>();
             app.manage(AppState { db: db.clone(), tx, tap_running: AtomicBool::new(false), mic_test: Mutex::new(None) });
@@ -493,6 +568,7 @@ pub fn run() {
                     if let Err(e) = store::retention_purge(&conn, mode.as_deref().unwrap_or("store"), db::now_ms()) {
                         eprintln!("retention purge failed: {e}");
                     }
+                    pipeline::prune_recordings(&jobs_app, &conn);
                 }
                 std::thread::sleep(std::time::Duration::from_secs(3600));
             })?;
@@ -558,6 +634,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             models_list,
             model_select,
+            model_delete,
+            transcript_favorite,
+            transcript_audio,
+            transcript_retranscribe,
+            transcript_save,
             transcripts_list,
             transcript_copy,
             copy_last,

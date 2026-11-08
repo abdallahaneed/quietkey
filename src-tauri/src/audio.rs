@@ -205,6 +205,25 @@ fn open(mic: Option<String>) -> anyhow::Result<Stream> {
     Ok(Stream { mic, rate, used_fallback, shared, stop_tx })
 }
 
+/// 16 kHz mono samples as a 16-bit WAV file (Groq uploads, saved recordings).
+pub fn wav_bytes(samples: &[f32]) -> anyhow::Result<Vec<u8>> {
+    let mut wav = std::io::Cursor::new(Vec::new());
+    let spec = hound::WavSpec { channels: 1, sample_rate: 16_000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+    let mut w = hound::WavWriter::new(&mut wav, spec)?;
+    for s in samples {
+        w.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
+    }
+    w.finalize()?;
+    Ok(wav.into_inner())
+}
+
+/// A WAV written by `wav_bytes` back as samples.
+pub fn wav_samples(bytes: &[u8]) -> anyhow::Result<Vec<f32>> {
+    let mut r = hound::WavReader::new(std::io::Cursor::new(bytes))?;
+    anyhow::ensure!(r.spec().sample_rate == 16_000 && r.spec().channels == 1, "not a Quietkey recording");
+    Ok(r.samples::<i16>().map(|s| s.map(|v| v as f32 / i16::MAX as f32)).collect::<Result<_, _>>()?)
+}
+
 #[cfg(debug_assertions)]
 fn from_wav(path: &str, on_level: impl Fn(f32) + Send + 'static) -> anyhow::Result<Recording> {
     let mut r = hound::WavReader::open(path)?;
@@ -289,7 +308,14 @@ pub fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::resample;
+    use super::{resample, wav_bytes, wav_samples};
+
+    #[test]
+    fn wav_round_trip() {
+        let x = vec![0.0, 0.5, -0.5, 0.25];
+        let back = wav_samples(&wav_bytes(&x).unwrap()).unwrap();
+        assert!(x.iter().zip(&back).all(|(a, b)| (a - b).abs() < 1e-3));
+    }
 
     #[test]
     fn resample_lengths_and_values() {

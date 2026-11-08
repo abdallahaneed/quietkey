@@ -6,7 +6,8 @@ import { api, type Settings } from "../../lib/api";
 import { Button, Notice, RadioCards, TextInput } from "../../ui";
 import { ModelPicker } from "./ModelPicker";
 
-export function SpeechEngine({ settings, onSaved }: { settings: Settings; onSaved: (s: Settings) => void }) {
+/** `picker`: show the model list under "On this Mac" (Setup); Settings links to the Models page instead. */
+export function SpeechEngine({ settings, onSaved, picker = true }: { settings: Settings; onSaved: (s: Settings) => void; picker?: boolean }) {
   const [keySaved, setKeySaved] = useState<boolean | null>(null);
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -30,10 +31,10 @@ export function SpeechEngine({ settings, onSaved }: { settings: Settings; onSave
         { value: "groq", title: "Groq, with your free key", body: "Nothing to download, works on any Mac. Your recordings are sent to Groq to be turned into text." },
       ]} />
       {error && <Notice tone="error">{error}</Notice>}
-      {settings.stt_engine === "local" && (
-        <div className="ml-7 flex flex-col gap-2 border-l-2 border-border pl-4">
+      {settings.stt_engine === "local" && picker && (
+        <div className="flex flex-col gap-2">
           <p className="text-sm font-semibold">Pick a model</p>
-          <ModelPicker />
+          <ModelPicker search={false} languages={settings.languages} />
         </div>
       )}
       {settings.stt_engine === "groq" && (keySaved

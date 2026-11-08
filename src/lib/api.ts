@@ -16,6 +16,10 @@ export type Transcript = {
   cleanup_level: "none" | "light" | "medium";
   status: "pasted" | "paste_failed" | "cancelled" | "error";
   error: string | null;
+  /** Starred: kept when history is deleted after 24 hours. */
+  favorite: boolean;
+  /** A recording of this dictation is saved and can be played or transcribed again. */
+  audio: boolean;
 };
 
 export type DictationState =
@@ -81,6 +85,13 @@ export const api = {
   requestMicrophone: () => invoke<string>("request_microphone"),
   hotkeyStart: () => invoke<void>("hotkey_start"),
   transcriptDelete: (id: string) => invoke<number>("transcript_delete", { id }),
+  transcriptFavorite: (id: string, on: boolean) => invoke<void>("transcript_favorite", { id, on }),
+  /** The saved recording as a WAV file. */
+  transcriptAudio: async (id: string) => new Blob([await invoke<ArrayBuffer>("transcript_audio", { id })], { type: "audio/wav" }),
+  /** Runs the saved recording through the current model and cleanup again; returns the updated entry. */
+  transcriptRetranscribe: (id: string) => invoke<Transcript>("transcript_retranscribe", { id }),
+  /** Writes the text to a .txt file in Downloads, shows it in Finder and returns its path. */
+  transcriptSave: (id: string) => invoke<string>("transcript_save", { id }),
 
   settings: () => invoke<Settings>("settings_get"),
   updateSettings: (patch: Partial<Settings>) => invoke<Settings>("settings_update", { patch }),
@@ -93,6 +104,7 @@ export const api = {
 
   models: () => invoke<WhisperModel[]>("models_list"),
   modelSelect: (id: string) => invoke<void>("model_select", { id }),
+  modelDelete: (id: string) => invoke<void>("model_delete", { id }),
   dictionary: () => invoke<DictEntry[]>("dictionary_list"),
   dictionaryAdd: (word: string, misspelling: string | null) => invoke<string>("dictionary_add", { word, misspelling }),
   dictionaryUpdate: (id: string, word: string, misspelling: string | null) => invoke<void>("dictionary_update", { id, word, misspelling }),
@@ -115,7 +127,13 @@ export function applyTheme(theme: Settings["theme"]) {
 }
 
 export type WhisperModel = {
-  model: { id: string; label: string; size_mb: number; ram_mb: number; note: string };
+  model: {
+    id: string; label: string; size_mb: number; ram_mb: number; note: string;
+    /** School grades per language code, e.g. [["en", "A-"], ["ar", "-"]]; "-" = not supported. */
+    grades: [string, string][];
+    /** 1 (slow) to 4 (fastest) on an M1. */
+    speed: number;
+  };
   downloaded: boolean;
   active: boolean;
 };

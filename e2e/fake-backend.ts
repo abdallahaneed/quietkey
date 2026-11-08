@@ -37,10 +37,11 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
     };
     let groqKey = s.groqKeySaved ?? false;
     const models = [
-      { model: { id: "parakeet-v3", label: "Parakeet v3", size_mb: 740, ram_mb: 230, note: "Fastest and very accurate" }, downloaded: false, active: false },
-      { model: { id: "base", label: "Whisper Base", size_mb: 60, ram_mb: 180, note: "Fastest, for older Macs. Misses more words" }, downloaded: false, active: false },
-      { model: { id: "small", label: "Whisper Small", size_mb: 190, ram_mb: 350, note: "Good for clear English" }, downloaded: false, active: false },
-      { model: { id: "large-v3-turbo", label: "Whisper Large v3 Turbo", size_mb: 574, ram_mb: 700, note: "Most accurate" }, downloaded: true, active: true },
+      { model: { id: "parakeet-v3", label: "Parakeet v3", size_mb: 740, ram_mb: 230, note: "Fastest and very accurate", grades: [["en", "A-"], ["de", "B+"], ["ar", "-"]], speed: 4 }, downloaded: false, active: false },
+      { model: { id: "base", label: "Whisper Base", size_mb: 60, ram_mb: 180, note: "Fastest, for older Macs. Misses more words", grades: [["en", "C"], ["de", "D"], ["ar", "F"]], speed: 4 }, downloaded: true, active: false },
+      { model: { id: "small", label: "Whisper Small", size_mb: 190, ram_mb: 350, note: "Good for clear English", grades: [["en", "B"], ["de", "C"], ["ar", "D"]], speed: 3 }, downloaded: false, active: false },
+      { model: { id: "large-v3-turbo", label: "Whisper Large v3 Turbo", size_mb: 574, ram_mb: 700, note: "Most accurate", grades: [["en", "A-"], ["de", "A-"], ["ar", "C"]], speed: 2 }, downloaded: true, active: true },
+      { model: { id: "cohere-ar", label: "Cohere Transcribe Arabic", size_mb: 1560, ram_mb: 1900, note: "Best for Arabic", grades: [["en", "B+"], ["de", "-"], ["ar", "A"]], speed: 1 }, downloaded: false, active: false },
     ];
     const dupWord = (w: string, m: string | null, skip?: string) =>
       dict.some((d) => d.id !== skip && d.word.toLowerCase() === w.toLowerCase() && (d.misspelling ?? "").toLowerCase() === (m ?? "").toLowerCase());
@@ -117,6 +118,18 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
       },
       models_list: () => models.map((m) => ({ ...m, model: { ...m.model } })),
       model_select: () => null,
+      model_delete: (a: { id: string }) => {
+        const m = models.find((x) => x.model.id === a.id);
+        if (!m || m.active) throw "That model is in use. Switch to another model first";
+        m.downloaded = false; return null;
+      },
+      transcript_favorite: (a: { id: string; on: boolean }) => { const t = transcripts.find((x) => x.id === a.id); if (t) t.favorite = a.on; return null; },
+      transcript_audio: () => new Uint8Array([82, 73, 70, 70]).buffer,
+      transcript_retranscribe: (a: { id: string }) => {
+        const t = transcripts.find((x) => x.id === a.id); if (!t) throw "That dictation no longer exists";
+        t.final_text = "Transcribed again."; t.raw_text = "transcribed again"; return { ...t };
+      },
+      transcript_save: () => "/Users/me/Downloads/Quietkey 2026-11-08 10-15.txt",
       transcript_copy: () => null,
       hotkey_start: () => null,
       hotkey_pause: () => null,
@@ -177,5 +190,7 @@ export const sampleTranscript = (over: Record<string, unknown> = {}) => ({
   cleanup_level: "light",
   status: "pasted",
   error: null,
+  favorite: false,
+  audio: false,
   ...over,
 });

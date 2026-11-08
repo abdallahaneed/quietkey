@@ -1,6 +1,6 @@
 // The main window: sidebar + one screen at a time.
 import { useEffect, useState, type ComponentType } from "react";
-import { BarChart3, BookA, Home as HomeIcon, Palette, Settings as SettingsIcon, Sparkles, SwatchBook, TextQuote } from "lucide-react";
+import { BarChart3, BookA, Cpu, History, Palette, Settings as SettingsIcon, Sparkles, SwatchBook, TextQuote } from "lucide-react";
 import { cx } from "../ui";
 import { Home } from "./screens/Home";
 import { Setup } from "./screens/Setup";
@@ -10,13 +10,17 @@ import { Snippets } from "./screens/Snippets";
 import { Settings } from "./screens/Settings";
 import { Insights } from "./screens/Stubs";
 import { Style } from "./screens/Style";
+import { Models } from "./screens/Models";
+import { Footer } from "./parts/Footer";
+import logo from "../../assets/icon.svg";
 import { api, applyTheme } from "../lib/api";
 
-export type Route = "home" | "dictionary" | "snippets" | "style" | "insights" | "settings" | "setup" | "design";
+export type Route = "home" | "models" | "dictionary" | "snippets" | "style" | "insights" | "settings" | "setup" | "design";
 export type Nav = (r: Route) => void;
 
 const MAIN: { id: Route; label: string; icon: ComponentType<{ className?: string }> }[] = [
-  { id: "home", label: "Home", icon: HomeIcon },
+  { id: "home", label: "History", icon: History },
+  { id: "models", label: "Models", icon: Cpu },
   { id: "dictionary", label: "Dictionary", icon: BookA },
   { id: "snippets", label: "Snippets", icon: TextQuote },
   { id: "style", label: "Style", icon: Palette },
@@ -30,7 +34,7 @@ const BOTTOM: typeof MAIN = [
 ];
 
 const SCREENS: Record<Route, ComponentType<{ nav: Nav }>> = {
-  home: Home, dictionary: Dictionary, snippets: Snippets, style: Style, insights: Insights,
+  home: Home, models: Models, dictionary: Dictionary, snippets: Snippets, style: Style, insights: Insights,
   settings: Settings, setup: Setup, design: Design,
 };
 
@@ -54,29 +58,36 @@ export function Hub() {
       aria-current={route === r.id ? "page" : undefined}
       onClick={(e) => { e.preventDefault(); setRoute(r.id); }}
       className={cx(
-        "flex h-8 items-center gap-2.5 rounded-md px-2.5 text-base font-medium",
-        route === r.id ? "bg-accent-soft text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
+        "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-base font-medium",
+        route === r.id ? "bg-accent text-on-accent" : "text-fg hover:bg-surface-2",
       )}
     >
-      <r.icon className={cx("size-[18px]", route === r.id && "text-accent")} />
+      <r.icon className="size-[18px]" />
       {r.label}
     </a>
   );
 
   return (
-    <div className="flex h-full">
-      <aside className="flex w-[var(--sidebar)] shrink-0 flex-col border-r border-border bg-surface">
-        {/* Space for the inset traffic lights; draggable like a title bar. */}
-        <div data-tauri-drag-region className="h-[52px] shrink-0" />
-        <nav aria-label="Main" className="flex flex-1 flex-col gap-0.5 px-3">{MAIN.map(item)}</nav>
-        <nav aria-label="App" className="flex flex-col gap-0.5 px-3 pb-3">{BOTTOM.map(item)}</nav>
-      </aside>
-      <main className="flex-1 overflow-y-auto">
-        <div data-tauri-drag-region className="sticky top-0 z-10 h-[52px] bg-bg/80 backdrop-blur" />
-        <div className="mx-auto max-w-[var(--content-max)] px-8 pb-12">
-          <Screen nav={setRoute} />
-        </div>
-      </main>
+    <div className="flex h-full flex-col">
+      <div className="flex min-h-0 flex-1">
+        <aside className="flex w-[var(--sidebar)] shrink-0 flex-col border-r border-border bg-bg">
+          {/* Space for the inset traffic lights; draggable like a title bar. */}
+          <div data-tauri-drag-region className="h-[44px] shrink-0" />
+          <div data-tauri-drag-region className="mx-3 mb-3 flex items-center gap-2 border-b border-border px-1 pb-3">
+            <img src={logo} alt="" className="size-8" />
+            <span className="text-lg font-semibold">Quietkey</span>
+          </div>
+          <nav aria-label="Main" className="flex flex-1 flex-col gap-1 px-3">{MAIN.map(item)}</nav>
+          <nav aria-label="App" className="flex flex-col gap-1 px-3 pb-3">{BOTTOM.map(item)}</nav>
+        </aside>
+        <main className="flex-1 overflow-y-auto bg-bg">
+          <div data-tauri-drag-region className="sticky top-0 z-10 h-[44px] bg-bg/80 backdrop-blur" />
+          <div className="mx-auto max-w-[var(--content-max)] px-6 pb-10">
+            <Screen nav={setRoute} />
+          </div>
+        </main>
+      </div>
+      <Footer nav={setRoute} />
     </div>
   );
 }

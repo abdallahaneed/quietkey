@@ -7,6 +7,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0002_model.sql"),
     include_str!("../migrations/0003_stt_engine.sql"),
     include_str!("../migrations/0004_parakeet.sql"),
+    include_str!("../migrations/0005_history_cards.sql"),
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -64,6 +65,9 @@ pub struct Transcript {
     pub cleanup_level: String,
     pub status: String,
     pub error: Option<String>,
+    pub favorite: bool,
+    /// A recording is saved for this entry (play it, transcribe it again).
+    pub audio: bool,
 }
 
 pub struct NewTranscript<'a> {
@@ -109,18 +113,48 @@ pub fn insert_transcript(conn: &Connection, t: &NewTranscript, local_day: &str) 
     get_transcript(conn, &id)
 }
 
-const COLS: &str = "id, created_at, raw_text, final_text, app_bundle_id, app_name, language, duration_ms, word_count, cleanup_level, status, error";
+const COLS: &str = "id, created_at, raw_text, final_text, app_bundle_id, app_name, language, duration_ms, word_count, cleanup_level, status, error, favorite, audio_path is not null";
 
 fn row_to_transcript(r: &rusqlite::Row) -> rusqlite::Result<Transcript> {
     Ok(Transcript {
         id: r.get(0)?, created_at: r.get(1)?, raw_text: r.get(2)?, final_text: r.get(3)?,
         app_bundle_id: r.get(4)?, app_name: r.get(5)?, language: r.get(6)?, duration_ms: r.get(7)?,
         word_count: r.get(8)?, cleanup_level: r.get(9)?, status: r.get(10)?, error: r.get(11)?,
+        favorite: r.get(12)?, audio: r.get(13)?,
     })
 }
 
 pub fn get_transcript(conn: &Connection, id: &str) -> rusqlite::Result<Transcript> {
     conn.query_row(&format!("select {COLS} from transcripts where id = ?1"), [id], row_to_transcript)
+}
+
+/// Where the entry's recording is saved, if one is.
+pub fn audio_path(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row("select audio_path from transcripts where id = ?1", [id], |r| r.get(0))
+}
+
+pub fn set_audio_path(conn: &Connection, id: &str, path: &str) -> rusqlite::Result<usize> {
+    conn.execute("update transcripts set audio_path = ?2, updated_at = ?3 where id = ?1", params![id, path, now_ms()])
+}
+
+pub fn set_favorite(conn: &Connection, id: &str, on: bool) -> rusqlite::Result<usize> {
+    conn.execute("update transcripts set favorite = ?2, updated_at = ?3 where id = ?1", params![id, on, now_ms()])
+}
+
+/// After transcribing a recording again: new text, same entry. Usage stats keep the first count.
+pub fn update_text(conn: &Connection, id: &str, raw: &str, final_text: &str, language: Option<&str>, cleanup_level: &str) -> rusqlite::Result<Transcript> {
+    conn.execute(
+        "update transcripts set raw_text = ?2, final_text = ?3, word_count = ?4, language = ?5, cleanup_level = ?6, updated_at = ?7 where id = ?1",
+        params![id, raw, final_text, word_count(final_text), language, cleanup_level, now_ms()],
+    )?;
+    get_transcript(conn, id)
+}
+
+/// Every saved recording path, to remove files whose entry is gone.
+pub fn audio_paths(conn: &Connection) -> rusqlite::Result<std::collections::HashSet<String>> {
+    let mut stmt = conn.prepare("select audio_path from transcripts where audio_path is not null")?;
+    let rows = stmt.query_map([], |r| r.get(0))?;
+    rows.collect()
 }
 
 pub fn list_transcripts(conn: &Connection, before: Option<i64>, limit: u32) -> rusqlite::Result<Vec<Transcript>> {
@@ -170,6 +204,22 @@ mod tests {
         assert!(crate::store::set_model(&c, "tiny").is_err());
         crate::store::set_model(&c, "parakeet-v3").unwrap(); // 0004
         assert_eq!(crate::store::model_choice(&c).as_deref(), Some("parakeet-v3"));
+        crate::store::set_model(&c, "cohere-ar").unwrap(); // 0005
+        assert_eq!(crate::store::model_choice(&c).as_deref(), Some("cohere-ar"));
+    }
+
+    #[test]
+    fn favorite_audio_and_new_text() {
+        let c = mem();
+        let t = insert_transcript(&c, &sample("first take", "pasted"), "2026-11-08").unwrap();
+        assert!(!t.favorite && !t.audio);
+        set_favorite(&c, &t.id, true).unwrap();
+        set_audio_path(&c, &t.id, "/r/a.wav").unwrap();
+        let u = update_text(&c, &t.id, "second take here", "Second take here.", Some("en"), "light").unwrap();
+        assert!(u.favorite && u.audio);
+        assert_eq!((u.final_text.as_str(), u.word_count), ("Second take here.", 3));
+        assert_eq!(audio_path(&c, &t.id).unwrap().as_deref(), Some("/r/a.wav"));
+        assert!(audio_paths(&c).unwrap().contains("/r/a.wav"));
     }
 
     #[test]

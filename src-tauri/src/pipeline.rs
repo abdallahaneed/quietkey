@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const MIN_HOLD: Duration = Duration::from_millis(500); // shorter taps are accidental presses, ignore them
 const DOUBLE_PRESS: Duration = Duration::from_millis(400); // a second tap this soon after a short one locks hands-free
@@ -239,6 +239,7 @@ impl Machine {
         let mic = store::mic_choice(&self.db.lock().unwrap());
         match audio::start(mic, on_level) {
             Ok(rec) => {
+                cue(&self.db, "Tink");
                 crate::position_bar(&self.app);
                 let state = if mode == Mode::Hold { "recording" } else { "hands_free" };
                 let note = rec.used_fallback.then(|| "Chosen microphone not found, using the default".to_string());
@@ -262,8 +263,36 @@ impl Machine {
         let front = target(a.front); // capture before anything can change focus
         emit(&self.app, "processing", None);
         let (samples, duration_ms) = a.rec.stop();
+        cue(&self.db, "Pop"); // after stop, so the cue is not in the recording
         if self.jobs.send(Job { samples, duration_ms, front, refocus }).is_err() {
             emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Quietkey".into()));
+        }
+    }
+}
+
+/// Start and stop cues (Settings, Sound): macOS's own sounds through afplay, so there is no audio output code.
+/// A thread waits for afplay so no zombie process is left.
+fn cue(db: &Mutex<Connection>, name: &'static str) {
+    if store::sounds_on(&db.lock().unwrap()) {
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new("/usr/bin/afplay").args(["-v", "0.5", &format!("/System/Library/Sounds/{name}.aiff")]).status();
+        });
+    }
+}
+
+/// The folder for saved recordings, one WAV per history entry.
+pub fn recordings_dir(app: &AppHandle) -> anyhow::Result<std::path::PathBuf> {
+    let dir = app.path().app_data_dir()?.join("recordings");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// Deletes recordings whose history entry is gone (deleted, purged after 24 h, or history switched off).
+pub fn prune_recordings(app: &AppHandle, conn: &Connection) {
+    let (Ok(dir), Ok(keep)) = (recordings_dir(app), db::audio_paths(conn)) else { return };
+    for f in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if !keep.contains(f.path().to_string_lossy().as_ref()) {
+            let _ = std::fs::remove_file(f.path());
         }
     }
 }
@@ -296,7 +325,8 @@ impl Worker {
         };
         #[cfg(debug_assertions)]
         eprintln!("[timing] vad {:?}, kept {:.1}s of {:.1}s", tv.elapsed(), span.len() as f32 / 16_000.0, samples.len() as f32 / 16_000.0);
-        match self.process(&samples[span], front.bundle_id.as_deref()) {
+        let speech = &samples[span];
+        match process(&self.db, speech, front.bundle_id.as_deref()) {
             Ok(out) if out.final_text.is_empty() => emit(&self.app, "error", Some("Didn't hear anything".into())),
             Ok(out) => {
                 // Only refuse when macOS clearly reports a focused element that cannot take text (e.g. Finder).
@@ -304,7 +334,7 @@ impl Worker {
                 #[cfg(debug_assertions)]
                 eprintln!("[focus] {:?} pid={:?} accepts_text={accepts:?}", front.name, front.pid);
                 if accepts == Some(false) {
-                    self.save(&out, duration_ms, &front, "paste_failed", Some("no_text_field"));
+                    self.save(&out, duration_ms, &front, "paste_failed", Some("no_text_field"), speech);
                     emit(&self.app, "error", Some("No text field here. Click one, then press ⌃⌘V".into()));
                     return;
                 }
@@ -325,7 +355,7 @@ impl Worker {
                     PasteResult::Failed("clipboard_write") => ("paste_failed", Some("clipboard_write"), Some("Could not use the clipboard. Press ⌃⌘V to try again".into())),
                     PasteResult::Failed(e) => ("paste_failed", Some(e), Some("It's on your clipboard. Press ⌘V".into())),
                 };
-                self.save(&out, duration_ms, &front, status, err);
+                self.save(&out, duration_ms, &front, status, err, speech);
                 match (status, msg) {
                     ("pasted", None) => emit(&self.app, "success", None),
                     ("pasted", Some(m)) => emit(&self.app, "warning", Some(m)), // pasted, but cleanup fell back
@@ -336,11 +366,14 @@ impl Worker {
         }
     }
 
-    /// Whisper -> snippets -> dictionary fixes -> local rules -> optional LLM -> snippet text.
-    /// The database lock is never held during transcription or a network call.
-    fn process(&mut self, samples: &[f32], bundle: Option<&str>) -> anyhow::Result<Processed> {
+}
+
+/// Whisper -> snippets -> dictionary fixes -> local rules -> optional LLM -> snippet text.
+/// The database lock is never held during transcription or a network call. Also used to transcribe a saved
+/// recording again from History.
+pub fn process(db: &Mutex<Connection>, samples: &[f32], bundle: Option<&str>) -> anyhow::Result<Processed> {
         let (cfg, words, fixes, snippets, tone) = {
-            let conn = self.db.lock().unwrap();
+            let conn = db.lock().unwrap();
             (
                 store::pipeline_settings(&conn)?,
                 store::dict_words(&conn),
@@ -401,9 +434,10 @@ impl Worker {
         let final_text = cleanup::expand_placeholders(&text, &expansions);
         let fixes = cleanup::fixes_count(&raw, &final_text);
         Ok(Processed { raw, final_text, cleanup_level: cfg.cleanup_level, notice, language: language.clone(), storage_mode: cfg.storage_mode, fixes })
-    }
+}
 
-    fn save(&self, out: &Processed, duration_ms: i64, front: &paste::FrontApp, status: &str, err: Option<&str>) {
+impl Worker {
+    fn save(&self, out: &Processed, duration_ms: i64, front: &paste::FrontApp, status: &str, err: Option<&str>, audio: &[f32]) {
         let day = chrono::Local::now().format("%Y-%m-%d").to_string();
         let conn = self.db.lock().unwrap();
         let _ = db::set_last_text(&out.final_text);
@@ -431,7 +465,18 @@ impl Worker {
             &day,
         );
         match row {
-            Ok(t) => {
+            Ok(mut t) => {
+                // The recording, so History can play it and transcribe it again. Failing here loses only the audio.
+                let saved = recordings_dir(&self.app).and_then(|d| {
+                    let path = d.join(format!("{}.wav", t.id));
+                    std::fs::write(&path, audio::wav_bytes(audio)?)?;
+                    db::set_audio_path(&conn, &t.id, &path.to_string_lossy())?;
+                    Ok(())
+                });
+                match saved {
+                    Ok(()) => t.audio = true,
+                    Err(e) => eprintln!("save recording failed: {e}"),
+                }
                 let _ = self.app.emit("transcript://created", t);
             }
             Err(e) => eprintln!("save transcript failed: {e}"),

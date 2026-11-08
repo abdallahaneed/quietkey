@@ -267,3 +267,20 @@ test.describe("Shortcut editor", () => {
     await expect(page.getByRole("alert")).toContainText("modifier keys only");
   });
 });
+
+test.describe("History cards", () => {
+  test("star, save to file, play and transcribe again", async ({ page }) => {
+    const t = sampleTranscript({ audio: true });
+    await open(page, "home", { transcripts: [t, sampleTranscript({ id: "old", final_text: "No recording here" })] });
+    await expect(page.getByRole("button", { name: "Play recording" })).toHaveCount(1); // only the one with audio
+    await page.getByRole("button", { name: "Star" }).first().click();
+    await expect(page.getByRole("button", { name: "Unstar" })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Save to file" }).first().click();
+    await expect(page.getByText("Saved to /Users/me/Downloads/Quietkey 2026-11-08 10-15.txt")).toBeVisible();
+    await page.getByRole("button", { name: "Transcribe again" }).click();
+    await expect(page.getByText("Transcribed again.", { exact: true })).toBeVisible();
+    const cmds = await page.evaluate(() => (window as any).__fake.calls.map((c: any) => c.cmd));
+    expect(cmds).toEqual(expect.arrayContaining(["transcript_favorite", "transcript_save", "transcript_retranscribe"]));
+    await expectNoSeriousA11yIssues(page);
+  });
+});

@@ -79,16 +79,7 @@ const GROQ_STT_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions"
 /// `samples` are 16 kHz mono; sent as a 16-bit WAV.
 pub fn groq_transcribe(samples: &[f32], language: Option<&str>, prompt: &str) -> anyhow::Result<String> {
     let key = key_get().ok_or_else(|| anyhow::anyhow!("add your Groq key in Settings"))?;
-    let mut wav = std::io::Cursor::new(Vec::new());
-    {
-        let spec = hound::WavSpec { channels: 1, sample_rate: 16_000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
-        let mut w = hound::WavWriter::new(&mut wav, spec)?;
-        for s in samples {
-            w.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
-        }
-        w.finalize()?;
-    }
-    let file = reqwest::blocking::multipart::Part::bytes(wav.into_inner()).file_name("audio.wav").mime_str("audio/wav")?;
+    let file = reqwest::blocking::multipart::Part::bytes(crate::audio::wav_bytes(samples)?).file_name("audio.wav").mime_str("audio/wav")?;
     let mut form = reqwest::blocking::multipart::Form::new()
         .part("file", file)
         .text("model", "whisper-large-v3-turbo")

@@ -175,6 +175,11 @@ pub fn uses_groq(conn: &Connection) -> bool {
     conn.query_row("select stt_engine from settings where id = 1", [], |r| r.get::<_, String>(0)).is_ok_and(|e| e == "groq")
 }
 
+/// Start and stop sounds on (Settings, Sound).
+pub fn sounds_on(conn: &Connection) -> bool {
+    conn.query_row("select sounds from settings where id = 1", [], |r| r.get::<_, bool>(0)).unwrap_or(false)
+}
+
 /// The microphone the user picked, by device name. None = system default.
 pub fn mic_choice(conn: &Connection) -> Option<String> {
     conn.query_row("select mic_id from settings where id = 1", [], |r| r.get::<_, Option<String>>(0)).ok().flatten()
@@ -409,10 +414,10 @@ pub fn data_delete(conn: &Connection, categories: &[String], confirm: &str) -> R
     Ok(Value::Object(counts))
 }
 
-/// Runs hourly and at startup. In auto-delete mode, history older than 24 h goes.
+/// Runs hourly and at startup. In auto-delete mode, history older than 24 h goes, except starred entries.
 pub fn retention_purge(conn: &Connection, storage_mode: &str, now: i64) -> rusqlite::Result<usize> {
     match storage_mode {
-        "auto_delete_24h" => conn.execute("delete from transcripts where created_at < ?1", [now - 24 * 3600 * 1000]),
+        "auto_delete_24h" => conn.execute("delete from transcripts where created_at < ?1 and favorite = 0", [now - 24 * 3600 * 1000]),
         "never" => conn.execute("delete from transcripts", []),
         _ => Ok(0),
     }
@@ -504,8 +509,10 @@ mod tests {
         crate::db::insert_transcript(&c, &t, day).unwrap();
         assert!(data_delete(&c, &["history".into()], "delete").is_err());
         assert_eq!(retention_purge(&c, "auto_delete_24h", now_ms()).unwrap(), 0);
-        assert_eq!(retention_purge(&c, "auto_delete_24h", now_ms() + 25 * 3600 * 1000).unwrap(), 1);
-        crate::db::insert_transcript(&c, &t, day).unwrap();
+        let starred = crate::db::insert_transcript(&c, &t, day).unwrap();
+        crate::db::set_favorite(&c, &starred.id, true).unwrap();
+        assert_eq!(retention_purge(&c, "auto_delete_24h", now_ms() + 25 * 3600 * 1000).unwrap(), 1); // the starred one stays
+        crate::db::set_favorite(&c, &starred.id, false).unwrap();
         let out = data_delete(&c, &["everything".into()], "DELETE").unwrap();
         assert_eq!(out["history"], 1);
         assert_eq!(out["usage"], 1);

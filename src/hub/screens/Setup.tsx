@@ -1,6 +1,6 @@
 // First-run setup: permissions, microphone test, shortcut, a place to try it, then done.
 // Polls permissions while open, since macOS gives no callback when access changes.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, pushToTalk, settingsUrl, shortcutText, type Permissions, type Settings } from "../../lib/api";
 import { Button, Notice, PageHeader, PermissionRow, TextArea } from "../../ui";
@@ -35,6 +35,14 @@ export function Setup({ nav }: { nav: Nav }) {
     return () => window.clearInterval(id);
   }, []);
 
+  // A fresh install has no model: start the default download now so it runs while the other steps are done.
+  const started = useRef(false);
+  useEffect(() => {
+    if (s?.stt_engine !== "local" || started.current) return;
+    started.current = true;
+    api.models().then((ms) => { if (!ms.some((m) => m.downloaded)) return api.modelSelect("parakeet-v3"); }).catch(() => {});
+  }, [s?.stt_engine]);
+
   const startHotkey = async () => {
     try { await api.hotkeyStart(); setHotkeyError(null); setP(await api.permissions()); }
     catch (e) { setHotkeyError(String(e)); }
@@ -54,6 +62,7 @@ export function Setup({ nav }: { nav: Nav }) {
 
       <Step n={1} title="Choose how speech becomes text">
         {s && <SpeechEngine settings={s} onSaved={setS} />}
+        {s?.stt_engine === "local" && <p className="mt-2 text-sm text-muted">Models download in the background. Carry on with the next steps meanwhile.</p>}
       </Step>
 
       <Step n={2} title="Allow access">

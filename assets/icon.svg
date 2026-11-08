@@ -1,23 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#4c6ef5"/><stop offset="1" stop-color="#3b5bdb"/>
+      <stop offset="0" stop-color="#16756f"/><stop offset="1" stop-color="#0f5f5c"/>
     </linearGradient>
     <linearGradient id="cap" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e7ecff"/>
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#ece8e3"/>
     </linearGradient>
   </defs>
   <!-- macOS icon grid: 824 px squircle centred in 1024 -->
   <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
   <!-- key cap: base shadow, then the top -->
-  <rect x="242" y="282" width="540" height="480" rx="96" fill="#2c47b8"/>
+  <rect x="242" y="282" width="540" height="480" rx="96" fill="#0a4744"/>
   <rect x="242" y="252" width="540" height="470" rx="96" fill="url(#cap)"/>
   <!-- sound wave turning into a text cursor -->
-  <g fill="#3b5bdb">
+  <g fill="#0f5f5c">
     <rect x="337" y="452" width="44" height="70" rx="22"/>
     <rect x="413" y="402" width="44" height="170" rx="22"/>
     <rect x="489" y="362" width="44" height="250" rx="22"/>
     <rect x="565" y="422" width="44" height="130" rx="22"/>
   </g>
-  <rect x="651" y="352" width="26" height="270" rx="13" fill="#1f2b5c"/>
+  <rect x="651" y="352" width="26" height="270" rx="13" fill="#c75a1c"/>
 </svg>

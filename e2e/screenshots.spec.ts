@@ -9,7 +9,7 @@ test.skip(!dir, "set SCREENSHOT_DIR to save screenshots");
 
 const data = {
   transcripts: [
-    sampleTranscript(),
+    sampleTranscript({ audio: true, favorite: true }),
     sampleTranscript({ final_text: "Please send the notes to test@example.com, thanks a lot.", app_name: "Slack", created_at: Date.now() - 3_600_000 }),
   ],
   dictionary: [
@@ -24,7 +24,7 @@ const data = {
 };
 
 for (const theme of ["light", "dark"]) {
-  for (const [screen, height] of [["home", 680], ["setup", 1300], ["dictionary", 680], ["snippets", 680], ["style", 1500], ["settings", 2300]] as const) {
+  for (const [screen, height] of [["home", 680], ["models", 680], ["setup", 1300], ["dictionary", 680], ["snippets", 680], ["style", 1500], ["settings", 2000]] as const) {
     test(`${screen} ${theme}`, async ({ page }) => {
       await page.setViewportSize({ width: 1000, height });
       await open(page, screen, data);

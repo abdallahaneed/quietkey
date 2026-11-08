@@ -1,8 +1,9 @@
-// Home: dictation history grouped by day, newest first, live-updating.
+// History: one card per dictation, grouped by day, newest first, live-updating. A card can be copied, starred,
+// saved to a file, played back and transcribed again from its saved recording.
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Mic, MoreHorizontal } from "lucide-react";
+import { Copy, FileDown, Mic, MoreHorizontal, RotateCw, Star } from "lucide-react";
 import { api, events, pushToTalk, type Permissions, type Transcript } from "../../lib/api";
-import { EmptyState, IconButton, KeyCaps, Menu, Modal, Notice, PageHeader, SkeletonRows, Button, TextInput, cx } from "../../ui";
+import { AudioPlayer, EmptyState, IconButton, KeyCaps, Menu, Modal, Notice, PageHeader, SkeletonRows, Button, TextInput, cx } from "../../ui";
 import type { Nav } from "../Hub";
 
 function dayLabel(ms: number): string {
@@ -45,6 +46,24 @@ export function Home({ nav }: { nav: Nav }) {
     }
   };
   useEffect(() => { api.settings().then((s) => setKeys(pushToTalk(s))).catch(() => {}); }, []);
+
+  const [redoing, setRedoing] = useState<string | null>(null);
+  const replace = (t: Transcript) => setRows((r) => (r ?? []).map((x) => (x.id === t.id ? t : x)));
+  const favorite = async (t: Transcript) => {
+    replace({ ...t, favorite: !t.favorite });
+    try { await api.transcriptFavorite(t.id, !t.favorite); }
+    catch (e) { replace(t); setError(`Could not star it: ${e}`); }
+  };
+  const retranscribe = async (t: Transcript) => {
+    setRedoing(t.id); setError(null);
+    try { replace(await api.transcriptRetranscribe(t.id)); setNotice("Transcribed again with the current model."); }
+    catch (e) { setError(`Could not transcribe it again: ${e}`); }
+    finally { setRedoing(null); }
+  };
+  const saveFile = async (t: Transcript) => {
+    try { setNotice(`Saved to ${await api.transcriptSave(t.id)}`); }
+    catch (e) { setError(`Could not save it: ${e}`); }
+  };
 
   const remove = async (t: Transcript) => {
     setConfirmDelete(null);
@@ -116,41 +135,51 @@ export function Home({ nav }: { nav: Nav }) {
       )}
       {groups.map(([label, items]) => (
         <section key={label} className="mb-6" aria-labelledby={`d-${label}`}>
-          <h2 id={`d-${label}`} className="sticky top-[52px] z-[5] bg-bg py-1 text-xs font-semibold uppercase tracking-wide text-muted">{label}</h2>
-          <ul className="divide-y divide-border">
+          <h2 id={`d-${label}`} className="sticky top-[44px] z-[5] bg-bg px-1 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted">{label}</h2>
+          <ul className="flex flex-col gap-2">
             {items.map((t) => (
-              <li key={t.id} className="group flex items-start gap-4 py-3">
-                <span className="w-16 shrink-0 pt-0.5 text-xs text-muted">{time(t.created_at)}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="line-clamp-3 select-text text-base">{t.final_text}</p>
-                  {showRaw.has(t.id) && (
-                    <p className="mt-1 select-text border-l-2 border-border pl-2 text-sm text-muted">
-                      <span className="sr-only">What you said: </span>{t.raw_text}
-                    </p>
-                  )}
-                  <p className="mt-1 flex gap-2 text-xs text-muted">
-                    {t.app_name && <span>{t.app_name}</span>}
-                    {t.status === "paste_failed" && <span className="text-warning">Not inserted, copied instead</span>}
+              <li key={t.id} className="rounded-lg border border-border bg-surface px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="flex min-w-0 gap-2 text-xs text-muted">
+                    <span>{time(t.created_at)}</span>
+                    {t.app_name && <span className="truncate">{t.app_name}</span>}
                     <span>{t.word_count} words</span>
-                    {edited(t) && (
-                      <button type="button" className="underline hover:text-fg" aria-expanded={showRaw.has(t.id)} onClick={() => toggleRaw(t.id)}>
-                        {showRaw.has(t.id) ? "Hide what you said" : "Show what you said"}
-                      </button>
-                    )}
+                    {t.status === "paste_failed" && <span className="text-warning">Not inserted, copied instead</span>}
                   </p>
+                  <div className="-mr-1.5 flex shrink-0 gap-0.5">
+                    <IconButton label={copied === t.id ? "Copied" : "Copy"} onClick={() => copy(t)}><Copy className="size-4" /></IconButton>
+                    <IconButton label={t.favorite ? "Unstar" : "Star"} aria-pressed={t.favorite} onClick={() => favorite(t)}>
+                      <Star className={cx("size-4", t.favorite && "fill-highlight text-highlight")} />
+                    </IconButton>
+                    {t.audio && (
+                      <IconButton label={redoing === t.id ? "Transcribing again…" : "Transcribe again"} disabled={!!redoing} onClick={() => retranscribe(t)}>
+                        <RotateCw className={cx("size-4", redoing === t.id && "animate-spin")} />
+                      </IconButton>
+                    )}
+                    <IconButton label="Save to file" onClick={() => saveFile(t)}><FileDown className="size-4" /></IconButton>
+                    <Menu
+                      trigger={<IconButton label="More"><MoreHorizontal className="size-4" /></IconButton>}
+                      items={[
+                        { label: "Copy", onSelect: () => copy(t) },
+                        ...(edited(t) ? [{ label: "Copy what you said", onSelect: () => copy(t, true) }] : []),
+                        { label: "Add to dictionary", onSelect: openAdd },
+                        { label: "Delete", onSelect: () => setConfirmDelete(t), danger: true },
+                      ]}
+                    />
+                  </div>
                 </div>
-                <div className={cx("flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100")}>
-                  <IconButton label={copied === t.id ? "Copied" : "Copy"} onClick={() => copy(t)}><Copy className="size-4" /></IconButton>
-                  <Menu
-                    trigger={<IconButton label="More"><MoreHorizontal className="size-4" /></IconButton>}
-                    items={[
-                      { label: "Copy", onSelect: () => copy(t) },
-                      ...(edited(t) ? [{ label: "Copy what you said", onSelect: () => copy(t, true) }] : []),
-                      { label: "Add to dictionary", onSelect: openAdd },
-                      { label: "Delete", onSelect: () => setConfirmDelete(t), danger: true },
-                    ]}
-                  />
-                </div>
+                <p className="mt-1 select-text text-base">{t.final_text}</p>
+                {showRaw.has(t.id) && (
+                  <p className="mt-1 select-text border-l-2 border-border pl-2 text-sm text-muted">
+                    <span className="sr-only">What you said: </span>{t.raw_text}
+                  </p>
+                )}
+                {edited(t) && (
+                  <button type="button" className="mt-1 text-xs text-muted underline hover:text-fg" aria-expanded={showRaw.has(t.id)} onClick={() => toggleRaw(t.id)}>
+                    {showRaw.has(t.id) ? "Hide what you said" : "Show what you said"}
+                  </button>
+                )}
+                {t.audio && <div className="-ml-1.5 mt-1.5"><AudioPlayer load={() => api.transcriptAudio(t.id)} duration={t.duration_ms / 1000} /></div>}
               </li>
             ))}
           </ul>

@@ -9,28 +9,36 @@ const lastPatch = (page: Page) =>
     return c.length ? c[c.length - 1].args.patch : null;
   });
 
+const choose = async (page: Page, box: string, option: string) => {
+  await page.getByRole("combobox", { name: box }).click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+};
+
 test.describe("Settings", () => {
   test("loads every section without accessibility issues", async ({ page }) => {
     await open(page, "settings");
-    for (const h of ["General", "Cleanup", "Shortcuts", "System", "Privacy"]) await expect(page.getByRole("heading", { name: h, exact: true })).toBeVisible();
+    for (const h of ["Shortcuts", "Languages", "Sound", "Speech", "Cleanup", "App", "Privacy"]) await expect(page.getByRole("heading", { name: h, exact: true })).toBeVisible();
     await expectNoSeriousA11yIssues(page);
   });
 
-  test("pick a smaller speech model: shows memory, download progress, then switches", async ({ page }) => {
+  test("reset arrows: disabled at the default, reset an edited value", async ({ page }) => {
+    await open(page, "settings", { settings: { cleanup_level: "none" } });
+    await expect(page.getByRole("button", { name: "Reset theme to default" })).toBeDisabled();
+    await page.getByRole("button", { name: "Reset cleanup level to default" }).click();
+    expect(await lastPatch(page)).toEqual({ cleanup_level: "light" });
+    await expect(page.getByRole("button", { name: "Reset cleanup level to default" })).toBeDisabled();
+  });
+
+  test("info icons explain a row", async ({ page }) => {
     await open(page, "settings");
-    const small = page.getByRole("radio", { name: /Small/ });
-    await expect(small).toContainText("about 350 MB of memory");
-    await expect(small).toContainText("190 MB download");
-    await expect(page.getByRole("radio", { name: /Large v3 Turbo/ })).toBeChecked();
-    await small.click();
-    const sent = await page.evaluate(() => (window as any).__fake.calls.filter((c: any) => c.cmd === "model_select").map((c: any) => c.args));
-    expect(sent).toEqual([{ id: "small" }]);
-    await page.evaluate(() => (window as any).__fake.emit("model://progress", { id: "small", done: 95_000_000, total: 190_000_000 }));
-    await expect(small).toContainText("Downloading 50%");
-    await expect(page.getByRole("radio", { name: /Base/ })).toBeDisabled();
-    await page.evaluate(() => (window as any).__fake.emit("model://error", { id: "small", message: "network is down" }));
-    await expect(page.getByText("Could not switch the model: network is down")).toBeVisible();
-    await expect(page.getByRole("radio", { name: /Base/ })).toBeEnabled();
+    await page.getByRole("button", { name: "About Microphone" }).hover();
+    await expect(page.getByRole("tooltip")).toContainText("falls back to the system default");
+  });
+
+  test("start and stop sounds switch", async ({ page }) => {
+    await open(page, "settings");
+    await page.getByRole("switch", { name: "Start and stop sounds" }).click();
+    expect(await lastPatch(page)).toEqual({ sounds: false });
   });
 
   test("pick a microphone", async ({ page }) => {
@@ -65,13 +73,13 @@ test.describe("Settings", () => {
 
   test("cleanup level", async ({ page }) => {
     await open(page, "settings");
-    await page.getByRole("radio", { name: /^Off Paste exactly/ }).click();
+    await choose(page, "Cleanup level", "Off");
     expect(await lastPatch(page)).toEqual({ cleanup_level: "none" });
   });
 
   test("Groq: wrong key refused, real key saved to the Keychain, then removed", async ({ page }) => {
     await open(page, "settings");
-    await page.getByRole("radiogroup", { name: "AI cleanup provider" }).getByRole("radio", { name: /^Groq/ }).click();
+    await choose(page, "AI cleanup provider", "Groq");
     expect(await lastPatch(page)).toEqual({ llm_provider: "groq" });
     await page.getByLabel("Groq API key").fill("hello");
     await page.getByRole("button", { name: "Save key" }).click();
@@ -87,7 +95,7 @@ test.describe("Settings", () => {
     await open(page, "settings", { settings: { llm_provider: "groq" } });
     await page.getByRole("button", { name: "Try cleanup on a sample" }).click();
     await expect(page.getByText("no Groq API key saved")).toBeVisible();
-    await page.getByRole("radio", { name: /^Off Only the built-in rules/ }).click();
+    await choose(page, "AI cleanup provider", "Off");
     await page.getByRole("button", { name: "Try cleanup on a sample" }).click();
     await expect(page.getByText("So I think we should meet at 6 tomorrow.")).toBeVisible();
   });
@@ -104,14 +112,15 @@ test.describe("Settings", () => {
 
   test("turning history off asks first; Cancel keeps it", async ({ page }) => {
     await open(page, "settings");
-    await page.getByRole("radio", { name: /^Don't keep history/ }).click();
+    const box = page.getByRole("combobox", { name: "Dictation history" });
+    await choose(page, "Dictation history", "Don't keep history");
     await expect(page.getByRole("dialog")).toContainText("All saved dictations are deleted now");
     await page.getByRole("button", { name: "Cancel" }).click();
-    await expect(page.getByRole("radio", { name: /^Keep history/ })).toBeChecked();
-    await page.getByRole("radio", { name: /^Delete after 24 hours/ }).click();
+    await expect(box).toContainText("Keep history");
+    await choose(page, "Dictation history", "Delete after 24 hours");
     await page.getByRole("button", { name: "Delete and switch" }).click();
     expect(await lastPatch(page)).toEqual({ storage_mode: "auto_delete_24h" });
-    await expect(page.getByRole("radio", { name: /^Delete after 24 hours/ })).toBeChecked();
+    await expect(box).toContainText("Delete after 24 hours");
   });
 
   test("delete data needs the word DELETE", async ({ page }) => {
@@ -147,5 +156,59 @@ test.describe("Settings", () => {
     await open(page, "settings");
     await expect(page.getByRole("heading", { name: "Shortcuts" })).toBeVisible();
     await expect(page.getByText(/macOS also uses fn|is running/)).toHaveCount(0);
+  });
+});
+
+test.describe("Models", () => {
+  test("graded per language, sorted for the user's languages, without accessibility issues", async ({ page }) => {
+    await open(page, "models", { settings: { languages: ["ar"] } });
+    await expect(page.getByRole("radio", { name: /Cohere Transcribe Arabic/ })).toContainText("A");
+    // Arabic speaker: Cohere first among the downloads, Parakeet (no Arabic) last
+    const names = await page.getByRole("radio").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")!.split(".")[0]));
+    expect(names.slice(-1)[0]).toBe("Parakeet v3");
+    expect(names.indexOf("Cohere Transcribe Arabic")).toBe(2); // after the two on this Mac
+    await expect(page.getByLabel("Arabic: not supported").first()).toBeVisible();
+    await expectNoSeriousA11yIssues(page);
+  });
+
+  test("search filters the list", async ({ page }) => {
+    await open(page, "models");
+    await page.getByLabel("Search models").fill("arabic");
+    await expect(page.getByRole("radio")).toHaveCount(1);
+    await page.getByLabel("Search models").fill("zzz");
+    await expect(page.getByText('No model matches "zzz".')).toBeVisible();
+  });
+
+  test("pick a model: download progress, other models locked, error unlocks", async ({ page }) => {
+    await open(page, "models");
+    const small = page.getByRole("radio", { name: /Whisper Small/ });
+    await expect(small).toHaveAccessibleName(/190 MB download/);
+    await expect(page.getByRole("radio", { name: /Large v3 Turbo/ })).toBeChecked();
+    await small.click();
+    const sent = await page.evaluate(() => (window as any).__fake.calls.filter((c: any) => c.cmd === "model_select").map((c: any) => c.args));
+    expect(sent).toEqual([{ id: "small" }]);
+    await page.evaluate(() => (window as any).__fake.emit("model://progress", { id: "small", done: 95_000_000, total: 190_000_000 }));
+    await expect(small).toContainText("Downloading 50%");
+    await expect(page.getByRole("button", { name: /Speech model: Whisper Small: downloading 50%/ })).toBeVisible(); // footer
+    await expect(page.getByRole("radio", { name: /Whisper Base/ })).toBeDisabled();
+    await page.evaluate(() => (window as any).__fake.emit("model://error", { id: "small", message: "network is down" }));
+    await expect(page.getByText("Could not switch the model: network is down")).toBeVisible();
+    await expect(page.getByRole("radio", { name: /Whisper Base/ })).toBeEnabled();
+  });
+
+  test("delete a downloaded model; the one in use has no delete", async ({ page }) => {
+    await open(page, "models");
+    await expect(page.getByRole("button", { name: "Delete Whisper Large v3 Turbo" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Delete Whisper Base" }).click();
+    await expect(page.getByRole("radio", { name: /Whisper Base/ })).toHaveAccessibleName(/60 MB download/);
+  });
+
+  test("footer switches between downloaded models", async ({ page }) => {
+    await open(page, "home");
+    await page.getByRole("button", { name: /Speech model: Whisper Large v3 Turbo/ }).click();
+    await expect(page.getByRole("menuitem", { name: "Cohere Transcribe Arabic" })).toHaveCount(0); // not downloaded
+    await page.getByRole("menuitem", { name: "Whisper Base" }).click();
+    const sent = await page.evaluate(() => (window as any).__fake.calls.filter((c: any) => c.cmd === "model_select").map((c: any) => c.args));
+    expect(sent).toEqual([{ id: "base" }]);
   });
 });

@@ -1,10 +1,12 @@
-// Settings: microphone, languages, theme, cleanup and free AI providers, shortcuts, system and privacy.
-import { useEffect, useState, type ReactNode } from "react";
+// Settings as grouped cards: shortcuts, languages, sound, speech, cleanup, app and privacy. Each row: label, (i), control,
+// and a reset arrow where the setting has a default.
+import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ShortcutEditor } from "../parts/ShortcutEditor";
 import { api, applyTheme, pushToTalk, settingsUrl, type DeleteCategory, type Mic, type Permissions, type Settings as S } from "../../lib/api";
-import { Button, Checkbox, IconButton, KeyCaps, Modal, Notice, PageHeader, RadioCards, SelectMenu, SkeletonRows, Switch, TextInput } from "../../ui";
+import { Button, Checkbox, Group, IconButton, KeyCaps, Modal, Notice, PageHeader, Row, SelectMenu, SkeletonRows, TextInput, Toggle } from "../../ui";
+import type { Nav } from "../Hub";
 import { SpeechEngine } from "../parts/SpeechEngine";
 
 const LANGUAGES: [string, string][] = [
@@ -18,29 +20,7 @@ const DELETE_OPTIONS: [DeleteCategory, string][] = [
   ["personalization", "Style choices"], ["usage", "Usage statistics"],
 ];
 
-function Section({ id, title, description, children }: { id: string; title: string; description?: string; children: ReactNode }) {
-  return (
-    <section aria-labelledby={id} className="mb-10">
-      <h2 id={id} className="text-lg font-semibold">{title}</h2>
-      {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
-      <div className="mt-4 flex flex-col gap-4">{children}</div>
-    </section>
-  );
-}
-
-function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-6">
-      <div>
-        <p className="text-base font-medium">{label}</p>
-        {hint && <p className="text-sm text-muted">{hint}</p>}
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
-  );
-}
-
-export function Settings() {
+export function Settings({ nav }: { nav: Nav }) {
   const [s, setS] = useState<S | null>(null);
   const [mics, setMics] = useState<Mic[]>([]);
   const [keySaved, setKeySaved] = useState(false);
@@ -130,159 +110,161 @@ export function Settings() {
 
   const multiLang = s.languages.length > 1 || s.auto_detect_language;
 
+  const fnKeys = pushToTalk(s);
   return (
     <>
       <PageHeader title="Settings" description="Changes are saved as you make them." />
       {error && <div className="mb-6"><Notice tone="error" action={<Button size="sm" variant="ghost" onClick={() => setError(null)}>Dismiss</Button>}>{error}</Notice></div>}
 
-      <Section id="general" title="General">
-        <Row label="Microphone" hint="Quietkey falls back to the system default if this one is unplugged.">
-          <div className="flex items-center gap-1">
-            <SelectMenu
-              label="Microphone"
-              value={s.mic_id ?? DEFAULT_MIC}
-              onChange={(v) => update({ mic_id: v === DEFAULT_MIC ? null : v })}
-              options={[
-                { value: DEFAULT_MIC, label: "System default" },
-                ...mics.map((m) => ({ value: m.name, label: m.is_default ? `${m.name} (default)` : m.name })),
-                ...(s.mic_id && !mics.some((m) => m.name === s.mic_id) ? [{ value: s.mic_id, label: `${s.mic_id} (not connected)` }] : []),
-              ]}
-            />
-            <IconButton label="Refresh microphones" onClick={() => api.mics().then(setMics).catch((e) => setError(String(e)))}><RefreshCw className="size-4" /></IconButton>
-          </div>
+      <Group id="shortcuts" title="Shortcuts">
+        <Row label="Hold to dictate" info="Hold these keys to talk, let go to insert. Press them twice quickly, or add Space, to keep talking hands-free. Modifier keys only, so nothing gets typed while you hold them."
+          onReset={() => update({ shortcuts: { ...s.shortcuts, push_to_talk: [["Fn"]], hands_free: [["Fn", "Space"]] } })} isDefault={fnKeys.join() === "Fn"}>
+          <ShortcutEditor settings={s} onSaved={setS} />
         </Row>
-        <Row label="Theme">
-          <SelectMenu label="Theme" value={s.theme} onChange={(v) => update({ theme: v })}
-            options={[{ value: "system", label: "Match macOS" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }]} />
+        {([["Hands-free on / off", [...fnKeys, "Space"], "Starts dictation without holding. Press again to insert."],
+           ["Cancel", ["Escape"], "Throws the recording away. Undo brings it back for a few seconds."],
+           ["Paste last dictation again", ["Ctrl", "Cmd", "V"], "Inserts your last dictation where the cursor is."],
+           ["Copy last dictation", ["Ctrl", "Cmd", "C"], "Puts your last dictation on the clipboard."]] as [string, string[], string][]).map(([label, keys, info]) => (
+          <Row key={label} label={label} info={info}><KeyCaps keys={keys} /></Row>
+        ))}
+      </Group>
+      {perm?.fn_key_conflict && fnKeys.includes("Fn") && (
+        <div className="-mt-4 mb-6"><Notice tone="warning" action={<Button size="sm" onClick={() => openUrl(settingsUrl.keyboard)}>Open Keyboard settings</Button>}>
+          macOS also uses fn for dictation, emoji or switching input. Set "Press fn key to" to "Do Nothing", or pick other keys.
+        </Notice></div>
+      )}
+      {perm && perm.other_dictation_apps.length > 0 && (
+        <div className="-mt-4 mb-6"><Notice tone="warning">
+          {perm.other_dictation_apps.join(" and ")} {perm.other_dictation_apps.length === 1 ? "is" : "are"} running. If {perm.other_dictation_apps.length === 1 ? "it listens" : "they listen"} for the same keys, both apps will record and paste. Change the keys in one of them, or quit it.
+        </Notice></div>
+      )}
+
+      <Group id="languages" title="Languages" description={multiLang ? "Quietkey detects which of these you are speaking." : "Quietkey listens for this language only, which is the most accurate."}>
+        <Row label="Detect the language automatically" info="Works for any language, slightly less accurate than picking one.">
+          <Toggle label="Detect the language automatically" checked={s.auto_detect_language}
+            onChange={(v) => (!v && s.languages.length === 0 ? setError("Pick a language first, then turn detection off.") : update({ auto_detect_language: v }))} />
         </Row>
-        <div>
-          <p className="text-base font-medium">Languages you speak</p>
-          <p className="text-sm text-muted">
-            {multiLang ? "Quietkey detects which of these you are speaking." : "Quietkey listens for this language only, which is the most accurate."}
-          </p>
-          <div className="mt-2 rounded-lg border border-border px-4">
-            <Switch label="Detect the language automatically" description="Works for any language, slightly less accurate than picking one."
-              checked={s.auto_detect_language}
-              onChange={(v) => (!v && s.languages.length === 0 ? setError("Pick a language first, then turn detection off.") : update({ auto_detect_language: v }))} />
-          </div>
-          <fieldset className="mt-3 grid grid-cols-3 gap-x-4 gap-y-2">
+        <Row label="Languages you speak" info="Models are graded for these on the Models page." below={
+          <fieldset className="grid grid-cols-3 gap-x-4 gap-y-2">
             <legend className="sr-only">Languages</legend>
             {LANGUAGES.map(([code, name]) => (
               <Checkbox key={code} label={name} checked={s.languages.includes(code)} onChange={(on) => toggleLanguage(code, on)} />
             ))}
           </fieldset>
-        </div>
-      </Section>
+        } />
+      </Group>
 
-      <Section id="model" title="Speech" description="Bigger local models hear names and accents better but use more memory.">
-        <SpeechEngine settings={s} onSaved={setS} />
-      </Section>
+      <Group id="sound" title="Sound">
+        <Row label="Microphone" info="Quietkey falls back to the system default if this one is unplugged." onReset={() => update({ mic_id: null })} isDefault={s.mic_id === null}>
+          <SelectMenu
+            label="Microphone"
+            value={s.mic_id ?? DEFAULT_MIC}
+            onChange={(v) => update({ mic_id: v === DEFAULT_MIC ? null : v })}
+            options={[
+              { value: DEFAULT_MIC, label: "System default" },
+              ...mics.map((m) => ({ value: m.name, label: m.is_default ? `${m.name} (default)` : m.name })),
+              ...(s.mic_id && !mics.some((m) => m.name === s.mic_id) ? [{ value: s.mic_id, label: `${s.mic_id} (not connected)` }] : []),
+            ]}
+          />
+          <IconButton label="Refresh microphones" onClick={() => api.mics().then(setMics).catch((e) => setError(String(e)))}><RefreshCw className="size-4" /></IconButton>
+        </Row>
+        <Row label="Start and stop sounds" info="A short sound when recording starts and when it stops, so you know Quietkey heard the shortcut.">
+          <Toggle label="Start and stop sounds" checked={s.sounds} onChange={(v) => update({ sounds: v })} />
+        </Row>
+      </Group>
 
-      <Section id="cleanup" title="Cleanup" description="What happens to the text between speaking and pasting.">
-        <RadioCards label="Cleanup level" value={s.cleanup_level} onChange={(v) => update({ cleanup_level: v })} options={[
-          { value: "none", title: "Off", body: "Paste exactly what was heard." },
-          { value: "light", title: "Light", body: "Remove “um” and repeated words, keep only the corrected part when you correct yourself." },
-          { value: "medium", title: "Polish", body: "Also smooth the wording. Needs AI cleanup below; without it this works like Light." },
-        ]} />
-        <div>
-          <p className="text-base font-medium">AI cleanup</p>
-          <p className="text-sm text-muted">Optional and free. Fixes grammar and follows the tone you set for each kind of app. Only text is sent, never audio.</p>
-          <div className="mt-3">
-            <RadioCards label="AI cleanup provider" value={s.llm_provider} onChange={(v) => update({ llm_provider: v })} options={[
-              { value: "none", title: "Off", body: "Only the built-in rules. Nothing leaves your Mac." },
-              { value: "groq", title: "Groq", body: "Free API key from Groq, fast. The text is sent to Groq." },
-              { value: "ollama", title: "Ollama", body: "A model running on this Mac. Free and private, needs Ollama installed." },
-            ]} />
-          </div>
-        </div>
-        {s.llm_provider === "groq" && (
-          <div className="flex flex-col gap-3 rounded-lg bg-surface p-4">
-            {keySaved ? (
-              <Row label="Groq API key" hint="Saved in your macOS Keychain.">
-                <Button variant="ghost" onClick={() => api.groqKeyDelete().then(() => setKeySaved(false))}>Remove key</Button>
-              </Row>
-            ) : (
-              <form className="flex items-end gap-2" onSubmit={(e) => { e.preventDefault(); saveKey(); }}>
-                <TextInput label="Groq API key" type="password" autoComplete="off" value={groqKey} onChange={(e) => setGroqKey(e.target.value)}
-                  placeholder="gsk_…" error={keyError ?? undefined} className="flex-1" />
-                <Button type="submit" variant="primary" disabled={!groqKey.trim()}>Save key</Button>
-              </form>
+      <Group id="model" title="Speech" action={<Button size="sm" variant="ghost" onClick={() => nav("models")}>Choose model…</Button>}>
+        <div className="p-4"><SpeechEngine settings={s} onSaved={setS} picker={false} /></div>
+      </Group>
+
+      <Group id="cleanup" title="Cleanup" description="What happens to the text between speaking and pasting.">
+        <Row label="Cleanup level" info="Off pastes exactly what was heard. Light removes “um” and repeated words and keeps only the corrected part when you correct yourself. Polish also smooths the wording, which needs AI cleanup; without it Polish works like Light."
+          onReset={() => update({ cleanup_level: "light" })} isDefault={s.cleanup_level === "light"}>
+          <SelectMenu label="Cleanup level" value={s.cleanup_level} onChange={(v) => update({ cleanup_level: v })}
+            options={[{ value: "none", label: "Off" }, { value: "light", label: "Light" }, { value: "medium", label: "Polish" }]} />
+        </Row>
+        <Row label="AI cleanup" info="Optional and free. Fixes grammar and follows the tone you set for each kind of app. Only text is sent, never audio. Groq needs a free API key and receives the text; Ollama runs a model on this Mac."
+          onReset={() => update({ llm_provider: "none" })} isDefault={s.llm_provider === "none"}
+          below={<>
+            {s.llm_provider === "groq" && (
+              <div className="flex flex-col gap-3 rounded-md bg-bg p-3">
+                {keySaved ? (
+                  <div className="flex items-center justify-between gap-4">
+                    <div><p className="text-sm font-medium">Groq API key</p><p className="text-sm text-muted">Saved in your macOS Keychain.</p></div>
+                    <Button variant="ghost" onClick={() => api.groqKeyDelete().then(() => setKeySaved(false))}>Remove key</Button>
+                  </div>
+                ) : (
+                  <form className="flex items-end gap-2" onSubmit={(e) => { e.preventDefault(); saveKey(); }}>
+                    <TextInput label="Groq API key" type="password" autoComplete="off" value={groqKey} onChange={(e) => setGroqKey(e.target.value)}
+                      placeholder="gsk_…" error={keyError ?? undefined} className="flex-1" />
+                    <Button type="submit" variant="primary" disabled={!groqKey.trim()}>Save key</Button>
+                  </form>
+                )}
+                {!keySaved && (
+                  <p className="text-sm text-muted">
+                    No key yet?{" "}
+                    <button type="button" className="text-accent underline" onClick={() => openUrl("https://console.groq.com/keys")}>Create one free at console.groq.com</button>
+                  </p>
+                )}
+                <TextInput label="Model" defaultValue={s.groq_model} onBlur={(e) => e.target.value !== s.groq_model && update({ groq_model: e.target.value })} />
+              </div>
             )}
-            {!keySaved && (
-              <p className="text-sm text-muted">
-                No key yet?{" "}
-                <button type="button" className="text-accent underline" onClick={() => openUrl("https://console.groq.com/keys")}>Create one free at console.groq.com</button>
-              </p>
+            {s.llm_provider === "ollama" && (
+              <div className="flex flex-col gap-3 rounded-md bg-bg p-3">
+                <TextInput label="Model" defaultValue={s.ollama_model} onBlur={(e) => e.target.value !== s.ollama_model && update({ ollama_model: e.target.value })} />
+                <TextInput label="Address" defaultValue={s.ollama_url} onBlur={(e) => e.target.value !== s.ollama_url && update({ ollama_url: e.target.value })} />
+              </div>
             )}
-            <TextInput label="Model" defaultValue={s.groq_model} onBlur={(e) => e.target.value !== s.groq_model && update({ groq_model: e.target.value })} />
-          </div>
-        )}
-        {s.llm_provider === "ollama" && (
-          <div className="flex flex-col gap-3 rounded-lg bg-surface p-4">
-            <TextInput label="Model" defaultValue={s.ollama_model} onBlur={(e) => e.target.value !== s.ollama_model && update({ ollama_model: e.target.value })} />
-            <TextInput label="Address" defaultValue={s.ollama_url} onBlur={(e) => e.target.value !== s.ollama_url && update({ ollama_url: e.target.value })} />
-          </div>
-        )}
-        <div className="flex items-start gap-3">
-          <Button loading={test.running} onClick={runTest}>Try cleanup on a sample</Button>
-          <div className="min-w-0 flex-1" aria-live="polite">
+          </>}>
+          <SelectMenu label="AI cleanup provider" value={s.llm_provider} onChange={(v) => update({ llm_provider: v })}
+            options={[{ value: "none", label: "Off" }, { value: "groq", label: "Groq" }, { value: "ollama", label: "Ollama" }]} />
+        </Row>
+        <Row label="Try it" info="Runs a sample sentence through your current cleanup settings." below={
+          (test.result || test.error) && <div aria-live="polite">
             {test.result && <p className="text-sm">{test.result}</p>}
             {test.error && <p className="text-sm text-danger">{test.error}</p>}
           </div>
-        </div>
-      </Section>
-
-      <Section id="shortcuts" title="Shortcuts" description="Hold the dictation keys to talk. Press them twice quickly, or add Space, to keep talking hands-free.">
-        <Row label="Hold to dictate" hint="Modifier keys only, so nothing gets typed while you hold them.">
-          <ShortcutEditor settings={s} onSaved={setS} />
+        }>
+          <Button size="sm" loading={test.running} onClick={runTest}>Try cleanup on a sample</Button>
         </Row>
-        {perm?.fn_key_conflict && pushToTalk(s).includes("Fn") && (
-          <Notice tone="warning" action={<Button size="sm" onClick={() => openUrl(settingsUrl.keyboard)}>Open Keyboard settings</Button>}>
-            macOS also uses fn for dictation, emoji or switching input. Set "Press fn key to" to "Do Nothing", or pick other keys.
-          </Notice>
-        )}
-        {perm && perm.other_dictation_apps.length > 0 && (
-          <Notice tone="warning">
-            {perm.other_dictation_apps.join(" and ")} {perm.other_dictation_apps.length === 1 ? "is" : "are"} running. If {perm.other_dictation_apps.length === 1 ? "it listens" : "they listen"} for the same keys, both apps will record and paste. Change the keys in one of them, or quit it.
-          </Notice>
-        )}
-        {([["Hands-free on / off", [...pushToTalk(s), "Space"]], ["Cancel", ["Escape"]], ["Paste last dictation again", ["Ctrl", "Cmd", "V"]], ["Copy last dictation", ["Ctrl", "Cmd", "C"]]] as [string, string[]][]).map(([label, keys]) => (
-          <Row key={label} label={label}><KeyCaps keys={keys} /></Row>
-        ))}
-      </Section>
+      </Group>
 
-      <Section id="system" title="System">
-        <div className="rounded-lg border border-border px-4">
-          <Switch label="Start Quietkey when you log in" checked={s.launch_at_login} onChange={(v) => update({ launch_at_login: v })} />
-          <Switch label="Show the dictation bar" description="When it is hidden, Quietkey still listens for your shortcut." checked={s.show_bar} onChange={(v) => update({ show_bar: v })} />
-        </div>
-      </Section>
+      <Group id="system" title="App">
+        <Row label="Theme" onReset={() => update({ theme: "system" })} isDefault={s.theme === "system"}>
+          <SelectMenu label="Theme" value={s.theme} onChange={(v) => update({ theme: v })}
+            options={[{ value: "system", label: "Match macOS" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }]} />
+        </Row>
+        <Row label="Start Quietkey when you log in">
+          <Toggle label="Start Quietkey when you log in" checked={s.launch_at_login} onChange={(v) => update({ launch_at_login: v })} />
+        </Row>
+        <Row label="Show the dictation bar" info="When it is hidden, Quietkey still listens for your shortcut.">
+          <Toggle label="Show the dictation bar" checked={s.show_bar} onChange={(v) => update({ show_bar: v })} />
+        </Row>
+      </Group>
 
-      <Section id="privacy" title="Privacy" description={s.stt_engine === "groq"
+      <Group id="privacy" title="Privacy" description={s.stt_engine === "groq"
         ? "Your recordings are sent to Groq with your own key to be turned into text, and nowhere else. Quietkey never takes screenshots."
         : s.llm_provider === "groq"
         ? "Your voice is transcribed on this Mac and never uploaded. With Groq on, the transcribed text of each dictation is sent to Groq for cleanup. Quietkey never takes screenshots."
         : "Your voice and text stay on this Mac. Quietkey makes no network calls for dictation and never takes screenshots."}>
-        <RadioCards label="Dictation history" value={s.storage_mode} onChange={chooseStorage} options={[
-          { value: "store", title: "Keep history", body: "Your dictations stay on this Mac until you delete them." },
-          { value: "auto_delete_24h", title: "Delete after 24 hours", body: "Each dictation is removed a day after you make it." },
-          { value: "never", title: "Don't keep history", body: "Nothing is saved. ⌃⌘V still works until you quit." },
-        ]} />
-        <div className="rounded-lg border border-border p-4">
-          <p className="text-base font-medium">Delete data</p>
-          <fieldset className="mt-2 grid grid-cols-2 gap-2">
+        <Row label="Dictation history" info="Keep: dictations and their recordings stay on this Mac until you delete them. Delete after 24 hours: each one is removed a day later, starred ones stay. Don't keep: nothing is saved, ⌃⌘V still works until you quit."
+          onReset={() => chooseStorage("store")} isDefault={s.storage_mode === "store"}>
+          <SelectMenu label="Dictation history" value={s.storage_mode} onChange={chooseStorage}
+            options={[{ value: "store", label: "Keep history" }, { value: "auto_delete_24h", label: "Delete after 24 hours" }, { value: "never", label: "Don't keep history" }]} />
+        </Row>
+        <Row label="Delete data" below={<>
+          <fieldset className="grid grid-cols-2 gap-2">
             <legend className="sr-only">Data to delete</legend>
             {DELETE_OPTIONS.map(([key, label]) => (
               <Checkbox key={key} label={label} checked={toDelete.has(key)}
                 onChange={(on) => setToDelete((d) => { const n = new Set(d); on ? n.add(key) : n.delete(key); return n; })} />
             ))}
           </fieldset>
-          <div className="mt-3 flex items-center gap-3">
-            <Button variant="danger" disabled={toDelete.size === 0} onClick={() => { setConfirmText(""); setDeleteOpen(true); }}>Delete selected…</Button>
-            {deleteResult && <span className="text-sm text-muted" role="status">{deleteResult}</span>}
-          </div>
-        </div>
-      </Section>
+          {deleteResult && <p className="mt-2 text-sm text-muted" role="status">{deleteResult}</p>}
+        </>}>
+          <Button size="sm" variant="danger" disabled={toDelete.size === 0} onClick={() => { setConfirmText(""); setDeleteOpen(true); }}>Delete selected…</Button>
+        </Row>
+      </Group>
 
       <Modal
         open={!!pendingStorage}
