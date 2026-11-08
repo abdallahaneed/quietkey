@@ -1,4 +1,4 @@
-// Where speech becomes text: a Whisper model on this Mac (private, offline) or Groq's Whisper with the user's free key
+// Where speech becomes text: a Parakeet or Whisper model on this Mac (private, offline) or Groq's Whisper with the user's free key
 // (nothing to download, works on any Mac). Used in Setup and Settings.
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";

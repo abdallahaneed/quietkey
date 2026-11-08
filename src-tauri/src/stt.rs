@@ -1,5 +1,5 @@
 use std::path::Path;
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState};
+use transcribe_cpp::{RunExtension, RunOptions, Session, WhisperRunOptions};
 
 /// The models offered in Settings. Sizes are the download; RAM is what the app uses with the model loaded,
 /// measured on an M-series Mac (cargo test --lib model_ram -- --ignored).
@@ -8,20 +8,43 @@ pub struct Model {
     pub id: &'static str,
     pub label: &'static str,
     pub file: &'static str,
+    pub url: &'static str,
     pub size_mb: u32,
     pub ram_mb: u32,
     pub note: &'static str,
 }
 
+const WHISPER_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
+
 pub const MODELS: &[Model] = &[
-    Model { id: "base", label: "Base", file: "ggml-base-q5_1.bin", size_mb: 60, ram_mb: 180, note: "Fastest, for older Macs. Misses more words" },
-    Model { id: "small", label: "Small", file: "ggml-small-q5_1.bin", size_mb: 190, ram_mb: 350, note: "Good for clear English" },
-    Model { id: "large-v3-turbo", label: "Large v3 Turbo", file: "ggml-large-v3-turbo-q5_0.bin", size_mb: 574, ram_mb: 700, note: "Most accurate, best for names and mixed languages" },
+    Model {
+        id: "parakeet-v3",
+        label: "Parakeet v3",
+        file: "parakeet-tdt-0.6b-v3-Q8_0.gguf",
+        // Pinned revision so the file never changes under a user.
+        url: "https://huggingface.co/handy-computer/parakeet-tdt-0.6b-v3-gguf/resolve/85ac09ea12fc4b1112fa76810059364bc6adc9de/",
+        size_mb: 740,
+        ram_mb: 230,
+        note: "Fastest and very accurate. English, German and 23 more European languages, picks the language itself. Ignores dictionary hints",
+    },
+    Model { id: "base", label: "Whisper Base", file: "ggml-base-q5_1.bin", url: WHISPER_URL, size_mb: 60, ram_mb: 180, note: "Small download, for older Macs. Misses more words" },
+    Model { id: "small", label: "Whisper Small", file: "ggml-small-q5_1.bin", url: WHISPER_URL, size_mb: 190, ram_mb: 350, note: "Good for clear English" },
+    Model { id: "large-v3-turbo", label: "Whisper Large v3 Turbo", file: "ggml-large-v3-turbo-q5_0.bin", url: WHISPER_URL, size_mb: 574, ram_mb: 700, note: "99 languages, including Arabic. Slower, uses dictionary words as hints" },
 ];
 
-/// The model for a settings value; unknown values get the default (the last, most accurate one).
+/// The model for a settings value; unknown values get the default (Parakeet). Benches only.
+#[cfg(test)]
 pub fn model(id: Option<&str>) -> &'static Model {
-    MODELS.iter().find(|m| Some(m.id) == id).unwrap_or(&MODELS[MODELS.len() - 1])
+    MODELS.iter().find(|m| Some(m.id) == id).unwrap_or(&MODELS[0])
+}
+
+/// The model to load: the saved choice if its file is on disk, else the first model on disk (Parakeet first),
+/// else the default. A fresh install has a saved choice (the column default) but no file, so it gets Parakeet.
+pub fn active(choice: Option<&str>, dir: &Path) -> &'static Model {
+    if let Some(m) = MODELS.iter().find(|m| Some(m.id) == choice && dir.join(m.file).exists()) {
+        return m;
+    }
+    MODELS.iter().find(|m| dir.join(m.file).exists()).unwrap_or(&MODELS[0])
 }
 
 /// Downloads `m` into `dir` (a .part file, renamed once complete). `progress(done, total)` gets byte counts.
@@ -32,7 +55,7 @@ pub fn download(m: &Model, dir: &Path, progress: impl Fn(u64, u64)) -> anyhow::R
     if dest.exists() {
         return Ok(dest);
     }
-    let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}", m.file);
+    let url = format!("{}{}", m.url, m.file);
     let mut resp = reqwest::blocking::Client::builder()
         .timeout(None)
         .build()?
@@ -66,69 +89,59 @@ pub fn download(m: &Model, dir: &Path, progress: impl Fn(u64, u64)) -> anyhow::R
 }
 
 /// Loaded once and kept in memory: loading the model per dictation would add ~1 s.
+/// transcribe.cpp runs both families: Parakeet (.gguf) and Whisper (whisper.cpp .bin files).
 pub struct Stt {
-    _ctx: WhisperContext,
-    // Reused across calls: a fresh state re-allocates GPU buffers (~0.5 s each time).
-    state: WhisperState,
+    // Reused across calls: a fresh session re-allocates GPU buffers. It keeps the model alive.
+    session: Session,
+    /// Whisper takes a language hint and an initial prompt; Parakeet detects the language and takes neither.
+    whisper: bool,
 }
 
 impl Stt {
     pub fn load(model: &Path) -> anyhow::Result<Self> {
-        let path = model.to_str().ok_or_else(|| anyhow::anyhow!("model path is not UTF-8"))?;
-        let mut cp = WhisperContextParameters::default();
-        cp.flash_attn(true);
-        let ctx = WhisperContext::new_with_params(path, cp).map_err(|e| anyhow::anyhow!("model load failed: {e}"))?;
-        let state = ctx.create_state().map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(Self { _ctx: ctx, state })
+        let _ = transcribe_cpp::disable_logging(); // it prints every buffer allocation to stderr
+        let m = transcribe_cpp::Model::load(model).map_err(|e| anyhow::anyhow!("model load failed: {e}"))?;
+        let whisper = m.arch() == "whisper";
+        let session = m.session().map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(Self { session, whisper })
     }
 
-    /// `language` None = auto-detect. `prompt` biases spelling (dictionary words).
+    /// `language` None = auto-detect. `prompt` biases spelling (dictionary words). Parakeet ignores both.
     pub fn transcribe(&mut self, samples: &[f32], language: Option<&str>, prompt: &str) -> anyhow::Result<String> {
-        self.transcribe_ctx(samples, language, prompt, None)
+        Ok(self.run(samples, language, prompt)?.0)
     }
 
     /// Auto-detect limited to `candidates`: if Whisper hears a language outside them, transcribe again in the
     /// first one. Returns the text and the language used. A separate detection pass would cost ~2 s every time.
+    /// Parakeet cannot be told a language, so its first result stands.
     pub fn transcribe_among(&mut self, samples: &[f32], candidates: &[String], prompt: &str) -> anyhow::Result<(String, Option<String>)> {
-        let text = self.transcribe(samples, None, prompt)?;
-        let heard = whisper_rs::get_lang_str(self.state.full_lang_id_from_state());
-        match retry_language(heard, candidates) {
-            None => Ok((text, heard.map(str::to_string))),
+        let (text, heard) = self.run(samples, None, prompt)?;
+        if !self.whisper {
+            return Ok((text, heard));
+        }
+        match retry_language(heard.as_deref(), candidates) {
+            None => Ok((text, heard)),
             Some(l) => Ok((self.transcribe(samples, Some(l), prompt)?, Some(l.to_string()))),
         }
     }
 
-    /// `ctx` overrides the encoder window (tests only); None picks it from the clip length.
-    pub fn transcribe_ctx(&mut self, samples: &[f32], language: Option<&str>, prompt: &str, ctx: Option<i32>) -> anyhow::Result<String> {
-        let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        p.set_language(language.or(Some("auto")));
-        p.set_n_threads(threads());
-        p.set_no_context(true);
-        // Timestamps let Whisper keep its place in clips over ~30 s; without them it skipped whole sentences
-        // (measured: 115 of 138 words kept). Costs ~0.5 s on a 40 s clip, nothing on short ones.
-        p.set_no_timestamps(false);
-        p.set_suppress_blank(true);
-        p.set_print_special(false);
-        p.set_print_progress(false);
-        p.set_print_realtime(false);
-        p.set_print_timestamps(false);
-        if !prompt.is_empty() {
-            p.set_initial_prompt(prompt);
-        }
-        // Whisper hallucinates on very short input; pad to 1 s of silence.
+    /// The text and the language the model reports, if any.
+    fn run(&mut self, samples: &[f32], language: Option<&str>, prompt: &str) -> anyhow::Result<(String, Option<String>)> {
+        let mut opts = RunOptions::default();
         let mut audio = samples.to_vec();
-        if audio.len() < 16_000 {
-            audio.resize(16_000 + 1600, 0.0);
+        if self.whisper {
+            opts.language = language.map(str::to_string);
+            if !prompt.is_empty() {
+                opts.family = Some(RunExtension::Whisper(WhisperRunOptions { initial_prompt: Some(prompt.to_string()), ..Default::default() }));
+            }
+            // Whisper hallucinates on very short input; pad to 1 s of silence.
+            if audio.len() < 16_000 {
+                audio.resize(16_000 + 1600, 0.0);
+            }
         }
-        p.set_audio_ctx(ctx.unwrap_or_else(|| audio_ctx(audio.len())));
-        self.state.full(p, &audio).map_err(|e| anyhow::anyhow!("transcribe failed: {e}"))?;
-        let text: String = self.state.as_iter().map(|seg| seg.to_string()).collect::<Vec<_>>().join("");
-        Ok(clean_whisper_text(&text))
+        let r = self.session.run(&audio, &opts).map_err(|e| anyhow::anyhow!("transcribe failed: {e}"))?;
+        Ok((clean_whisper_text(&r.text), r.language))
     }
-}
-
-fn threads() -> i32 {
-    std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(4).min(8)
 }
 
 /// The language to transcribe again in, or None when what Whisper heard is one of the user's languages.
@@ -142,14 +155,6 @@ fn retry_language<'a>(heard: Option<&str>, candidates: &'a [String]) -> Option<&
 const NON_SPEECH: &[&str] = &[
     "music", "laughs", "laughter", "silence", "applause", "inaudible", "coughs", "coughing", "sighs", "noise", "blank_audio",
 ];
-
-/// Whisper's encoder always runs a 30 s window (1500 frames). Dictation clips are short, so shrink the window to
-/// the clip plus a margin: about 2x faster with the same text. Never below 768: at 384 Whisper loops and returns
-/// gibberish for short clips (measured: 9 s and garbage vs 1 s and correct). Clips over ~13 s use more, up to 1500.
-pub fn audio_ctx(samples: usize) -> i32 {
-    let frames = (samples as f64 / 16_000.0 / 30.0 * 1500.0).ceil() as i32;
-    (frames + 128).clamp(768, 1500)
-}
 
 /// Drops Whisper's non-speech tags ("[BLANK_AUDIO]", "(music)") and tidies whitespace.
 /// Real parentheses the user dictated, like "(see above)", are kept.
@@ -172,7 +177,21 @@ pub fn clean_whisper_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{audio_ctx, clean_whisper_text, retry_language};
+    use super::{clean_whisper_text, retry_language};
+
+    #[test]
+    fn active_model_prefers_choice_then_disk() {
+        let dir = std::env::temp_dir().join(format!("qk-active-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(super::active(None, &dir).id, "parakeet-v3"); // fresh install
+        std::fs::write(dir.join("ggml-large-v3-turbo-q5_0.bin"), b"x").unwrap();
+        assert_eq!(super::active(None, &dir).id, "large-v3-turbo"); // old install without a saved choice keeps its model
+        assert_eq!(super::active(Some("small"), &dir).id, "large-v3-turbo"); // choice without its file
+        std::fs::write(dir.join("ggml-small-q5_1.bin"), b"x").unwrap();
+        assert_eq!(super::active(Some("small"), &dir).id, "small");
+        assert_eq!(super::active(Some("gone"), &dir).id, "small"); // first on disk in list order
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn retries_only_outside_chosen_languages() {
@@ -181,14 +200,6 @@ mod tests {
         assert_eq!(retry_language(Some("fr"), &picked), Some("en"));
         assert_eq!(retry_language(None, &picked), Some("en"));
         assert_eq!(retry_language(Some("fr"), &[]), None);
-    }
-
-    #[test]
-    fn audio_ctx_bounds() {
-        assert_eq!(audio_ctx(16_000), 768); // 1 s -> floor
-        assert_eq!(audio_ctx(16_000 * 10), 768);
-        assert_eq!(audio_ctx(16_000 * 20), 1000 + 128);
-        assert_eq!(audio_ctx(16_000 * 60), 1500); // long clip -> full window
     }
 
     #[test]
@@ -211,7 +222,7 @@ mod bench {
         let at = wav.windows(4).position(|w| w == b"data").unwrap() + 8; // 32-bit float PCM after the data chunk header
         let samples: Vec<f32> = wav[at..].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(None).file);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(std::env::var("QK_MODEL").ok().as_deref()).file);
         let t0 = std::time::Instant::now();
         let mut stt = super::Stt::load(&model).unwrap();
         let load = t0.elapsed();
@@ -232,7 +243,7 @@ mod lang_bench {
     fn detects_among_picked() {
         let dir = std::path::PathBuf::from(std::env::var("QUIETKEY_FIXTURES").unwrap());
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(None).file);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(std::env::var("QK_MODEL").ok().as_deref()).file);
         let mut stt = super::Stt::load(&model).unwrap();
         let picked = ["en".to_string(), "de".to_string()];
         for (n, want) in [("german", "de"), ("short", "en"), ("speech", "en")] {
@@ -255,7 +266,7 @@ mod mixed_bench {
     fn english_with_german_words() {
         let dir = std::path::PathBuf::from(std::env::var("QUIETKEY_MIX_DIR").unwrap());
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(None).file);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(std::env::var("QK_MODEL").ok().as_deref()).file);
         let mut stt = super::Stt::load(&model).unwrap();
         let picked = ["en".to_string(), "de".to_string()];
         let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wav")).collect();
@@ -275,7 +286,7 @@ mod mixed_bench {
 
 #[cfg(test)]
 mod ctx_bench {
-    /// Quality and speed per encoder window, long clip first (reproduces the suite order).
+    /// Quality and speed per fixture, long clip first (reproduces the suite order). QK_MODEL picks the model.
     /// Run: QUIETKEY_FIXTURES=../scripts/e2e/fixtures cargo test --release --lib ctx_bench -- --ignored --nocapture
     #[test]
     #[ignore]
@@ -286,10 +297,9 @@ mod ctx_bench {
             r.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect()
         };
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(None).file);
+        let model = std::path::PathBuf::from(home).join("Library/Application Support/dev.abdallah.quietkey/models").join(super::model(std::env::var("QK_MODEL").ok().as_deref()).file);
         let mut stt = super::Stt::load(&model).unwrap();
-        for ctx in [None, Some(768), Some(1500)] {
-            println!("=== ctx {:?}", ctx);
+        {
             let names: Vec<(&str, Option<&str>)> = match std::env::var("QUIETKEY_BENCH_ONLY") {
                 Ok(only) => only.split(',').map(|n| (Box::leak(n.to_string().into_boxed_str()) as &str, Some("en"))).collect(),
                 Err(_) => vec![("long", Some("en")), ("short", Some("en")), ("raw", Some("en")), ("german", Some("de")), ("speech", Some("en"))],
@@ -297,7 +307,7 @@ mod ctx_bench {
             for (n, lang) in names {
                 let a = load(n);
                 let t = std::time::Instant::now();
-                let out = stt.transcribe_ctx(&a, lang, "", ctx).unwrap();
+                let out = stt.transcribe(&a, lang, "").unwrap();
                 let shown: String = out.chars().take(70).collect();
                 println!("{:7} {:5.1}s audio  {:>6.0} ms  {:>3} words  {}", n, a.len() as f32 / 16000.0, t.elapsed().as_millis(), out.split_whitespace().count(), shown);
             }

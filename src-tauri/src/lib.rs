@@ -398,7 +398,7 @@ fn load_model(path: &std::path::Path) -> anyhow::Result<()> {
 #[tauri::command]
 fn models_list(app: AppHandle, state: State<AppState>) -> CmdResult<Vec<serde_json::Value>> {
     let dir = app.path().app_data_dir().map_err(err)?.join("models");
-    let active = stt::model(store::model_choice(&state.db.lock().unwrap()).as_deref()).id;
+    let active = stt::active(store::model_choice(&state.db.lock().unwrap()).as_deref(), &dir).id;
     Ok(stt::MODELS
         .iter()
         .map(|m| serde_json::json!({ "model": m, "downloaded": dir.join(m.file).exists(), "active": m.id == active }))
@@ -472,7 +472,8 @@ pub fn run() {
             // Model load + warm-up off the main thread; the first transcription is ~40% slower without it.
             let handle = app.handle().clone();
             let choice = store::model_choice(&db.lock().unwrap());
-            let model = data.join("models").join(stt::model(choice.as_deref()).file);
+            let models = data.join("models");
+            let model = models.join(stt::active(choice.as_deref(), &models).file);
             std::thread::Builder::new().name("pipeline".into()).spawn(move || {
                 // No file yet is a fresh install: Setup offers a download or the Groq key, so no error on the bar.
                 if let Err(e) = model.exists().then(|| load_model(&model)).unwrap_or(Ok(())) {

@@ -37,9 +37,10 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
     };
     let groqKey = s.groqKeySaved ?? false;
     const models = [
-      { model: { id: "base", label: "Base", size_mb: 60, ram_mb: 180, note: "Fastest, for older Macs. Misses more words" }, downloaded: false, active: false },
-      { model: { id: "small", label: "Small", size_mb: 190, ram_mb: 350, note: "Good for clear English" }, downloaded: false, active: false },
-      { model: { id: "large-v3-turbo", label: "Large v3 Turbo", size_mb: 574, ram_mb: 700, note: "Most accurate" }, downloaded: true, active: true },
+      { model: { id: "parakeet-v3", label: "Parakeet v3", size_mb: 740, ram_mb: 230, note: "Fastest and very accurate" }, downloaded: false, active: false },
+      { model: { id: "base", label: "Whisper Base", size_mb: 60, ram_mb: 180, note: "Fastest, for older Macs. Misses more words" }, downloaded: false, active: false },
+      { model: { id: "small", label: "Whisper Small", size_mb: 190, ram_mb: 350, note: "Good for clear English" }, downloaded: false, active: false },
+      { model: { id: "large-v3-turbo", label: "Whisper Large v3 Turbo", size_mb: 574, ram_mb: 700, note: "Most accurate" }, downloaded: true, active: true },
     ];
     const dupWord = (w: string, m: string | null, skip?: string) =>
       dict.some((d) => d.id !== skip && d.word.toLowerCase() === w.toLowerCase() && (d.misspelling ?? "").toLowerCase() === (m ?? "").toLowerCase());

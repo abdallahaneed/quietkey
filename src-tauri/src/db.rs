@@ -6,6 +6,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
     include_str!("../migrations/0002_model.sql"),
     include_str!("../migrations/0003_stt_engine.sql"),
+    include_str!("../migrations/0004_parakeet.sql"),
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -167,6 +168,8 @@ mod tests {
         crate::store::set_model(&c, "small").unwrap();
         assert_eq!(crate::store::model_choice(&c).as_deref(), Some("small"));
         assert!(crate::store::set_model(&c, "tiny").is_err());
+        crate::store::set_model(&c, "parakeet-v3").unwrap(); // 0004
+        assert_eq!(crate::store::model_choice(&c).as_deref(), Some("parakeet-v3"));
     }
 
     #[test]

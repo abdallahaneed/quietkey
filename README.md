@@ -24,7 +24,7 @@
 2. Open it once with a right-click on Quietkey → **Open** → **Open**. (The app is not notarized by Apple yet, so a normal double-click is blocked the first time. See [FAQ](#faq).)
 3. Pick how speech becomes text:
    - **Groq, with your free key:** get a key at [console.groq.com/keys](https://console.groq.com/keys) (no card), paste it. Nothing to download.
-   - **On this Mac:** one click downloads a speech model (60 to 574 MB). Works offline, your voice never leaves the Mac.
+   - **On this Mac:** one click downloads a speech model (Parakeet, 740 MB, or a Whisper model from 60 MB). Works offline, your voice never leaves the Mac.
 4. Allow the three permissions Setup asks for, then click any text field, **hold `fn`**, talk, let go.
 
 That's it. No account, no subscription, no word limit.
@@ -32,10 +32,11 @@ That's it. No account, no subscription, no word limit.
 ## Why Quietkey
 
 - **Free, for real.** No trial, no weekly word cap, no paid tier. MIT licence.
-- **Private by default.** Run Whisper on your Mac and nothing is uploaded. Or use your own Groq key: audio goes to Groq and nowhere else. There is no Quietkey server.
+- **Private by default.** Run the speech model on your Mac and nothing is uploaded. Or use your own Groq key: audio goes to Groq and nowhere else. There is no Quietkey server.
 - **Your first words are kept.** The microphone stays ready for 20 seconds after a dictation, so the next one starts the instant you press the key.
-- **Names come out right.** Select a misheard word in your history and choose **Add to dictionary**. Whisper spells it your way from then on.
-- **Pick the model that fits your Mac.** Base uses about 180 MB of memory, Small about 350 MB, Large v3 Turbo about 700 MB and hears names and accents best.
+- **Names come out right.** Select a misheard word in your history and choose **Add to dictionary**. Quietkey spells it your way from then on.
+- **Fast on any Mac.** Parakeet v3 is the default: a 40 second dictation is text in about 1.5 seconds, a short one in under 0.2 s. It covers English, German and 23 more European languages and uses about 230 MB of memory.
+- **Whisper when you need it.** For Arabic and 90 more languages, or dictionary words as spelling hints, pick a Whisper model: Base (180 MB of memory), Small (350 MB) or Large v3 Turbo (700 MB).
 - **Cleans up as you talk, offline.** Removes "um", repeated words and corrections like "at 5, actually 6". Say "new line" or "new paragraph".
 - **Never pastes the wrong thing.** Your clipboard is put back after every paste, and `⌃⌘V` pastes your last dictation again.
 
@@ -59,7 +60,7 @@ That's it. No account, no subscription, no word limit.
 | | Groq (your free key) | On this Mac |
 | --- | --- | --- |
 | Setup | paste a key | one model download |
-| Speed | very fast on any Mac | fast on Apple Silicon |
+| Speed | very fast on any Mac | very fast with Parakeet, slower with Whisper |
 | Works offline | no | yes |
 | Where your audio goes | Groq's servers | nowhere |
 | Cost | free tier | free |
@@ -103,7 +104,7 @@ Release: `scripts/release.sh` builds the signed universal `dist/Quietkey.dmg` (n
 
 Tests: `cd src-tauri && cargo test --lib`, `npx playwright test`, and `scripts/e2e/suite.sh` drives the real app end to end.
 
-How it fits together: `hotkey.rs` listens for the key with a Core Graphics event tap, `audio.rs` records with cpal, `stt.rs` runs whisper.cpp (Metal), `llm.rs` talks to Groq or Ollama, `cleanup.rs` holds the offline rules, `paste.rs` pastes and restores the clipboard, `pipeline.rs` ties one dictation together.
+How it fits together: `hotkey.rs` listens for the key with a Core Graphics event tap, `audio.rs` records with cpal, `stt.rs` runs Parakeet and Whisper through transcribe.cpp (Metal), `llm.rs` talks to Groq or Ollama, `cleanup.rs` holds the offline rules, `paste.rs` pastes and restores the clipboard, `pipeline.rs` ties one dictation together.
 
 ## Contributing
 

@@ -160,7 +160,7 @@ export function Home({ nav }: { nav: Nav }) {
         open={!!adding}
         onOpenChange={(o) => !o && setAdding(null)}
         title="Add to dictionary"
-        description="Whisper gets this spelling right from now on."
+        description="Quietkey gets this spelling right from now on."
         width="w-[400px]"
         footer={
           <>
@@ -173,7 +173,7 @@ export function Home({ nav }: { nav: Nav }) {
           <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); saveWord(); }}>
             {addError && <Notice tone="error">{addError}</Notice>}
             <TextInput label="Correct spelling" autoFocus maxLength={60} value={adding.word} onChange={(e) => setAdding({ ...adding, word: e.target.value })} placeholder="e.g. Aneed" />
-            <TextInput label="Whisper wrote (optional)" maxLength={60} value={adding.heard} onChange={(e) => setAdding({ ...adding, heard: e.target.value })} placeholder="e.g. a need" />
+            <TextInput label="Quietkey wrote (optional)" maxLength={60} value={adding.heard} onChange={(e) => setAdding({ ...adding, heard: e.target.value })} placeholder="e.g. a need" />
             <button type="submit" hidden />
           </form>
         )}

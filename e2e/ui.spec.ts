@@ -69,7 +69,7 @@ test.describe("Home", () => {
     await page.getByText(t.final_text).hover();
     await page.getByRole("button", { name: "More" }).first().click();
     await page.getByRole("menuitem", { name: "Add to dictionary" }).click();
-    await expect(page.getByLabel("Whisper wrote (optional)")).toHaveValue("Abdullah");
+    await expect(page.getByLabel("Quietkey wrote (optional)")).toHaveValue("Abdullah");
     await page.getByLabel("Correct spelling").fill("Abdallah");
     await page.getByRole("dialog").getByRole("button", { name: "Add" }).click();
     await expect(page.getByText('"Abdallah" added to your dictionary.')).toBeVisible();

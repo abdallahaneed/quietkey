@@ -16,9 +16,9 @@ test.describe("Dictionary", () => {
     await open(page, "dictionary");
     await page.getByRole("button", { name: "Add your first word" }).click();
     await page.keyboard.type("Aneed");
-    await page.getByRole("switch", { name: "Fix a word Whisper hears wrong" }).click();
-    await page.getByLabel("Whisper writes").fill("a need");
-    await page.getByLabel("Whisper writes").press("Enter");
+    await page.getByRole("switch", { name: "Fix a word Quietkey hears wrong" }).click();
+    await page.getByLabel("Quietkey writes").fill("a need");
+    await page.getByLabel("Quietkey writes").press("Enter");
     await expect(page.getByRole("cell", { name: "Aneed", exact: true })).toBeVisible();
     await expect(page.getByText("Heard as “a need”")).toBeVisible();
     await expectNoSeriousA11yIssues(page);

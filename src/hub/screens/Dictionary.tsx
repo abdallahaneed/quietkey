@@ -74,7 +74,7 @@ export function Dictionary() {
     <>
       <PageHeader
         title="Dictionary"
-        description="Names and terms Whisper should spell your way. Add a correction when it keeps hearing a word wrong."
+        description="Names and terms Quietkey should spell your way. Add a correction when it keeps hearing a word wrong: with Parakeet only corrections apply."
         actions={
           <>
             <input ref={fileInput} type="file" accept=".txt,.csv,text/plain" className="sr-only" aria-label="Import file" tabIndex={-1}
@@ -93,7 +93,7 @@ export function Dictionary() {
         <EmptyState
           icon={<BookA className="size-8" />}
           title="No words yet"
-          body="Add names, product terms or anything Whisper misspells. A text file with one word per line can be imported too."
+          body="Add names, product terms or anything Quietkey misspells. A text file with one word per line can be imported too."
           action={<Button variant="primary" onClick={startAdd}>Add your first word</Button>}
         />
       )}
@@ -157,9 +157,9 @@ export function Dictionary() {
           <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); save(); }}>
             {formError && <Notice tone="error">{formError}</Notice>}
             <TextInput label="Word" autoFocus max={60} maxLength={60} value={editing.word} onChange={(e) => setEditing({ ...editing, word: e.target.value })} placeholder="e.g. Aneed" />
-            <Switch label="Fix a word Whisper hears wrong" description="Replace what Whisper writes with the word above." checked={editing.fix} onChange={(v) => setEditing({ ...editing, fix: v })} />
+            <Switch label="Fix a word Quietkey hears wrong" description="Replace what Quietkey writes with the word above." checked={editing.fix} onChange={(v) => setEditing({ ...editing, fix: v })} />
             {editing.fix && (
-              <TextInput label="Whisper writes" max={60} maxLength={60} value={editing.heard} onChange={(e) => setEditing({ ...editing, heard: e.target.value })} placeholder="e.g. a need" />
+              <TextInput label="Quietkey writes" max={60} maxLength={60} value={editing.heard} onChange={(e) => setEditing({ ...editing, heard: e.target.value })} placeholder="e.g. a need" />
             )}
             <button type="submit" hidden />
           </form>
@@ -170,7 +170,7 @@ export function Dictionary() {
         open={!!confirmIds}
         onOpenChange={(o) => !o && setConfirmIds(null)}
         title={confirmIds && confirmIds.length > 1 ? `Remove ${confirmIds.length} words?` : "Remove this word?"}
-        description="Whisper will stop using it for spelling."
+        description="Quietkey will stop using it for spelling."
         width="w-[400px]"
         footer={
           <>

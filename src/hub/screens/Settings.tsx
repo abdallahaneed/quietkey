@@ -180,7 +180,7 @@ export function Settings() {
 
       <Section id="cleanup" title="Cleanup" description="What happens to the text between speaking and pasting.">
         <RadioCards label="Cleanup level" value={s.cleanup_level} onChange={(v) => update({ cleanup_level: v })} options={[
-          { value: "none", title: "Off", body: "Paste exactly what Whisper heard." },
+          { value: "none", title: "Off", body: "Paste exactly what was heard." },
           { value: "light", title: "Light", body: "Remove “um” and repeated words, keep only the corrected part when you correct yourself." },
           { value: "medium", title: "Polish", body: "Also smooth the wording. Needs AI cleanup below; without it this works like Light." },
         ]} />
