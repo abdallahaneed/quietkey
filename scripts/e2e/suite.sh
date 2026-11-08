@@ -50,7 +50,10 @@ reset_settings() { setting "cleanup_level='light', llm_provider='none', storage_
 # Each case gets a fresh test window; it is killed afterwards, so nothing stays open or gets saved.
 new_doc() { pkill -x QuietkeyTestTarget 2>/dev/null; sleep 0.3; ./QuietkeyTestTarget "$OUT" & sleep 1.5; }
 close_docs() { pkill -x QuietkeyTestTarget 2>/dev/null; rm -f "$OUT"; }
-trap close_docs EXIT
+# The suite changes settings per case; the user's own row is saved here and put back on any exit.
+q "drop table if exists e2e_settings_backup; create table e2e_settings_backup as select * from settings"
+restore_settings() { q "replace into settings select * from e2e_settings_backup; drop table e2e_settings_backup"; }
+trap 'close_docs; restore_settings' EXIT
 doc() { cat "$OUT" 2>/dev/null; }
 hold() { $K fn-down sleep:$1 fn-up; }
 pastes() { [[ -n "${QUIETKEY_LOG:-}" ]] && grep -c '^\[paste\]' "$QUIETKEY_LOG" || print -1; }
@@ -288,7 +291,6 @@ fi
 
 # --- cleanup --------------------------------------------------------------------------
 q "delete from snippets where id like 'e2e-%'; delete from dictionary_entries where id like 'e2e-%';"
-reset_settings
 print "\n$PASS passed, $FAIL failed"
 print -l $RESULTS > results.txt
 exit $(( FAIL > 0 ))
