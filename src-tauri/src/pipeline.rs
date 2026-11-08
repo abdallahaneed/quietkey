@@ -6,7 +6,7 @@ use crate::audio::{self, Recording};
 use crate::db::{self, NewTranscript};
 use crate::hotkey::HotkeyEvent;
 use crate::paste::{self, PasteResult};
-use crate::stt::Stt;
+use crate::stt::{Stt, Vad};
 use crate::{cleanup, llm, store};
 use rusqlite::Connection;
 use serde::Serialize;
@@ -64,6 +64,19 @@ struct Job {
 
 /// The loaded model. Settings swaps it when the user picks another one; the worker holds the lock while it transcribes.
 pub static STT: Mutex<Option<Stt>> = Mutex::new(None);
+/// Silero VAD, loaded at startup. None if it failed to load: the loudness check in audio.rs decides then.
+pub static VAD: Mutex<Option<Vad>> = Mutex::new(None);
+
+/// The part of the clip with speech, or None for silence.
+fn speech(samples: &[f32]) -> Option<std::ops::Range<usize>> {
+    if let Some(v) = VAD.lock().unwrap().as_mut() {
+        match v.speech(samples) {
+            Ok(r) => return r,
+            Err(e) => eprintln!("{e}"),
+        }
+    }
+    audio::has_speech(samples).then(|| 0..samples.len())
+}
 /// A model is loaded. Read on every key press, which must never wait for a transcription to release STT.
 pub static READY: AtomicBool = AtomicBool::new(false);
 
@@ -275,11 +288,15 @@ impl Worker {
 
     fn handle(&mut self, job: Job) {
         let Job { samples, duration_ms, front, refocus } = job;
-        if !audio::has_speech(&samples) {
+        #[cfg(debug_assertions)]
+        let tv = Instant::now();
+        let Some(span) = speech(&samples) else {
             emit(&self.app, "error", Some("Didn't hear anything".into()));
             return;
-        }
-        match self.process(&samples, front.bundle_id.as_deref()) {
+        };
+        #[cfg(debug_assertions)]
+        eprintln!("[timing] vad {:?}, kept {:.1}s of {:.1}s", tv.elapsed(), span.len() as f32 / 16_000.0, samples.len() as f32 / 16_000.0);
+        match self.process(&samples[span], front.bundle_id.as_deref()) {
             Ok(out) if out.final_text.is_empty() => emit(&self.app, "error", Some("Didn't hear anything".into())),
             Ok(out) => {
                 // Only refuse when macOS clearly reports a focused element that cannot take text (e.g. Finder).

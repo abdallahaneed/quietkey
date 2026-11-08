@@ -475,6 +475,10 @@ pub fn run() {
             let models = data.join("models");
             let model = models.join(stt::active(choice.as_deref(), &models).file);
             std::thread::Builder::new().name("pipeline".into()).spawn(move || {
+                match stt::Vad::load(&models) {
+                    Ok(v) => *pipeline::VAD.lock().unwrap() = Some(v),
+                    Err(e) => eprintln!("{e}, using the loudness check"),
+                }
                 // No file yet is a fresh install: Setup offers a download or the Groq key, so no error on the bar.
                 if let Err(e) = model.exists().then(|| load_model(&model)).unwrap_or(Ok(())) {
                     let _ = handle.emit("dictation://state", pipeline::StatePayload { state: "error", message: Some(format!("{e}")) });

@@ -144,6 +144,46 @@ impl Stt {
     }
 }
 
+const SILERO: &[u8] = include_bytes!("../models/silero-vad-v6.2-F32.gguf");
+const SILERO_FILE: &str = "silero-vad-v6.2-F32.gguf";
+/// Kept around the speech: Silero ends a segment a little early on soft final sounds ("thanks").
+const PAD: usize = 3_200; // 200 ms at 16 kHz
+
+/// Silero voice activity detection (MIT, 1.2 MB, built into the app). Rejects silence and steady noise that the
+/// models would turn into made-up text, and cuts the silence before and after speech so less audio is decoded.
+pub struct Vad {
+    session: transcribe_cpp::VadSession,
+}
+
+impl Vad {
+    /// transcribe.cpp loads from a file, so the built-in model is written into `dir` first when missing or partial.
+    pub fn load(dir: &Path) -> anyhow::Result<Self> {
+        let path = dir.join(SILERO_FILE);
+        if std::fs::metadata(&path).map(|m| m.len()).ok() != Some(SILERO.len() as u64) {
+            std::fs::create_dir_all(dir)?;
+            std::fs::write(&path, SILERO)?;
+        }
+        let m = transcribe_cpp::Model::load(&path).map_err(|e| anyhow::anyhow!("VAD load failed: {e}"))?;
+        Ok(Self { session: m.vad_session().map_err(|e| anyhow::anyhow!("{e}"))? })
+    }
+
+    /// The samples from the first speech to the last, padded; None when the clip has no speech.
+    pub fn speech(&mut self, samples: &[f32]) -> anyhow::Result<Option<std::ops::Range<usize>>> {
+        // 100 ms minimum instead of 250: a one-word answer like "yes" must count as speech.
+        let opts = transcribe_cpp::VadOptions { min_speech_ms: 100, ..Default::default() };
+        let r = self.session.run(samples, &opts).map_err(|e| anyhow::anyhow!("VAD failed: {e}"))?;
+        let segs: Vec<(usize, usize)> = r.segments.iter().map(|s| (s.start_sample.max(0) as usize, s.end_sample.max(0) as usize)).collect();
+        Ok(speech_span(&segs, samples.len()))
+    }
+}
+
+/// First segment start to last segment end, with PAD on both sides. Pauses inside are kept: cutting them could
+/// join words and would change what the models hear.
+fn speech_span(segs: &[(usize, usize)], len: usize) -> Option<std::ops::Range<usize>> {
+    let (first, last) = (segs.first()?.0, segs.last()?.1);
+    Some(first.saturating_sub(PAD).min(len)..last.saturating_add(PAD).min(len))
+}
+
 /// The language to transcribe again in, or None when what Whisper heard is one of the user's languages.
 fn retry_language<'a>(heard: Option<&str>, candidates: &'a [String]) -> Option<&'a str> {
     match heard {
@@ -177,7 +217,14 @@ pub fn clean_whisper_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clean_whisper_text, retry_language};
+    use super::{clean_whisper_text, retry_language, speech_span, PAD};
+
+    #[test]
+    fn speech_span_pads_and_clamps() {
+        assert_eq!(speech_span(&[], 16_000), None);
+        assert_eq!(speech_span(&[(8_000, 12_000)], 16_000), Some(8_000 - PAD..12_000 + PAD));
+        assert_eq!(speech_span(&[(1_000, 2_000), (9_000, 15_000)], 16_000), Some(0..16_000)); // clamped both ends
+    }
 
     #[test]
     fn active_model_prefers_choice_then_disk() {
@@ -335,3 +382,31 @@ mod ctx_bench {
     }
 }
 
+
+#[cfg(test)]
+mod vad_bench {
+    /// Speech kept and time per fixture. Run: QUIETKEY_FIXTURES=../scripts/e2e/fixtures cargo test --release --lib vad_bench -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn spans() {
+        let dir = std::path::PathBuf::from(std::env::var("QUIETKEY_FIXTURES").unwrap());
+        let mut vad = super::Vad::load(&std::env::temp_dir().join("qk-vad")).unwrap();
+        for n in ["short", "silence", "correction", "speech", "german", "varied", "long"] {
+            let mut r = hound::WavReader::open(dir.join(format!("{n}.wav"))).unwrap();
+            let a: Vec<f32> = r.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
+            let t = std::time::Instant::now();
+            let span = vad.speech(&a).unwrap();
+            println!("{n:10} {:5.1}s  {:>5.1} ms  kept {:?}", a.len() as f32 / 16000.0, t.elapsed().as_secs_f32() * 1000.0,
+                span.map(|s| format!("{:.2}..{:.2}s", s.start as f32 / 16000.0, s.end as f32 / 16000.0)));
+        }
+        // Fan-like noise at about -30 dBFS: loud enough for the old loudness check, no speech.
+        let mut x = 1u32;
+        let noise: Vec<f32> = (0..48_000).map(|_| { x ^= x << 13; x ^= x >> 17; x ^= x << 5; (x as f32 / u32::MAX as f32 - 0.5) * 0.11 }).collect();
+        println!("noise      loud={} vad={:?}", crate::audio::has_speech(&noise), vad.speech(&noise).unwrap());
+        let mut r = hound::WavReader::open(dir.join("speech.wav")).unwrap();
+        let mut padded = vec![0.0f32; 32_000];
+        padded.extend(r.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0));
+        padded.extend(vec![0.0f32; 32_000]);
+        println!("padded     {:.1}s vad={:?}", padded.len() as f32 / 16000.0, vad.speech(&padded).unwrap().map(|s| (s.start as f32 / 16000.0, s.end as f32 / 16000.0)));
+    }
+}
