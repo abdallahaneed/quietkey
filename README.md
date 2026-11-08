@@ -36,12 +36,14 @@ That's it. No account, no subscription, no word limit.
 - **Your first words are kept.** The microphone stays ready for 20 seconds after a dictation, so the next one starts the instant you press the key.
 - **Names come out right.** Select a misheard word in your history and choose **Add to dictionary**. Quietkey spells it your way from then on.
 - **Fast on any Mac.** Parakeet v3 is the default: a 40 second dictation is text in about 1.5 seconds, a short one in under 0.2 s. It covers English, German and 23 more European languages and uses about 230 MB of memory.
-- **Whisper when you need it.** For Arabic and 90 more languages, or dictionary words as spelling hints, pick a Whisper model: Base (180 MB of memory), Small (350 MB) or Large v3 Turbo (700 MB).
+- **Whisper when you need it.** For 90 more languages, or dictionary words as spelling hints, pick a Whisper model: Base (180 MB of memory), Small (350 MB) or Large v3 Turbo (700 MB).
+- **Arabic.** Cohere Transcribe Arabic (1.6 GB download) handles dialects and Arabic mixed with English. The Models page grades every model for English, German and Arabic.
+- **History you can replay.** Each dictation keeps its recording: play it, transcribe it again with another model, star it, or save it to a file.
 - **Cleans up as you talk, offline.** Removes "um", repeated words and corrections like "at 5, actually 6". Say "new line" or "new paragraph".
 - **Never pastes the wrong thing.** Your clipboard is put back after every paste, and `⌃⌘V` pastes your last dictation again.
 
 <p align="center">
-  <img src="assets/screenshot-setup.png" alt="Setup: choose Groq or a local model" width="620">
+  <img src="assets/screenshot-models.png" alt="Models: each one graded for English, German and Arabic, with speed and size" width="620">
 </p>
 
 ## Features
