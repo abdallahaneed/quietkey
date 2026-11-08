@@ -24,7 +24,7 @@
 2. Open it once with a right-click on Quietkey → **Open** → **Open**. (The app is not notarized by Apple yet, so a normal double-click is blocked the first time. See [FAQ](#faq).)
 3. Pick how speech becomes text:
    - **Groq, with your free key:** get a key at [console.groq.com/keys](https://console.groq.com/keys) (no card), paste it. Nothing to download.
-   - **On this Mac:** one click downloads a speech model (Parakeet, 740 MB, or a Whisper model from 60 MB). Works offline, your voice never leaves the Mac.
+   - **On this Mac:** Setup starts downloading Parakeet (740 MB) right away while you do the other steps. Works offline, your voice never leaves the Mac. Other models are on the Models page.
 4. Allow the three permissions Setup asks for, then click any text field, **hold `fn`**, talk, let go.
 
 That's it. No account, no subscription, no word limit.
@@ -36,9 +36,10 @@ That's it. No account, no subscription, no word limit.
 - **Your first words are kept.** The microphone stays ready for 20 seconds after a dictation, so the next one starts the instant you press the key.
 - **Names come out right.** Select a misheard word in your history and choose **Add to dictionary**. Quietkey spells it your way from then on.
 - **Fast on any Mac.** Parakeet v3 is the default: a 40 second dictation is text in about 1.5 seconds, a short one in under 0.2 s. It covers English, German and 23 more European languages and uses about 230 MB of memory.
-- **Whisper when you need it.** For 90 more languages, or dictionary words as spelling hints, pick a Whisper model: Base (180 MB of memory), Small (350 MB) or Large v3 Turbo (700 MB).
-- **Arabic.** Cohere Transcribe Arabic (1.6 GB download) handles dialects and Arabic mixed with English. The Models page grades every model for English, German and Arabic.
-- **History you can replay.** Each dictation keeps its recording: play it, transcribe it again with another model, star it, or save it to a file.
+- **Pick the model for your languages.** The Models page grades every model from A to F for English, German and Arabic, with speed and size, and puts the best fit for your languages first. Search, download, delete, or switch models from the bar at the bottom of the window.
+- **Whisper when you need it.** For 90 more languages, or dictionary words as spelling hints: Whisper Base (180 MB of memory), Small (350 MB) or Large v3 Turbo (700 MB).
+- **Arabic.** Cohere Transcribe Arabic (1.6 GB download) is made for Arabic, dialects included: 8 seconds of speech is text in under a second. English words inside Arabic speech are written in Arabic letters.
+- **History you can replay.** Each dictation keeps its recording: play it, transcribe it again with another model, star it, or save it to a text file.
 - **Cleans up as you talk, offline.** Removes "um", repeated words and corrections like "at 5, actually 6". Say "new line" or "new paragraph".
 - **Never pastes the wrong thing.** Your clipboard is put back after every paste, and `⌃⌘V` pastes your last dictation again.
 
@@ -49,12 +50,15 @@ That's it. No account, no subscription, no word limit.
 ## Features
 
 - Hold `fn` to talk. Double-press `fn` (or `fn` + `Space`) for hands-free, press again to stop. `Esc` cancels, with Undo.
+- A short sound when recording starts and stops (switch it off in Settings → Sound).
 - Choose another shortcut in Settings if you use `fn` for something else.
 - Dictionary with "heard → write" corrections, import from a text or CSV file.
 - Snippets: say "my email" and get the full address.
 - Tone per kind of app: casual in chats, formal in email.
 - Optional AI cleanup with your Groq key or a local [Ollama](https://ollama.com) model: fixes grammar, keeps your meaning.
-- History you can keep, auto-delete after 24 hours, or switch off.
+- History you can keep, auto-delete after 24 hours (starred dictations stay), or switch off.
+- Settings in grouped cards: every option has an ⓘ that explains it and a reset arrow back to the default.
+- Silence and room noise are filtered out before transcription (Silero voice detection), so nothing is made up from background sound.
 - The dictation bar sits above the Dock on the screen you are using, light and dark mode.
 
 ## Groq or on this Mac?
@@ -62,7 +66,7 @@ That's it. No account, no subscription, no word limit.
 | | Groq (your free key) | On this Mac |
 | --- | --- | --- |
 | Setup | paste a key | one model download |
-| Speed | very fast on any Mac | very fast with Parakeet, slower with Whisper |
+| Speed | very fast on any Mac | very fast with Parakeet, slower with Whisper and Cohere Arabic |
 | Works offline | no | yes |
 | Where your audio goes | Groq's servers | nowhere |
 | Cost | free tier | free |
@@ -71,7 +75,7 @@ You can switch any time in Settings → Speech.
 
 ## Privacy
 
-There is no Quietkey server and no analytics. Your history, dictionary and settings are stored in `~/Library/Application Support/dev.abdallah.quietkey/` and your Groq key in the macOS Keychain. With a local model, nothing leaves your Mac. With Groq, each recording is sent to Groq to be transcribed. AI cleanup, if you turn it on, sends text only.
+There is no Quietkey server and no analytics. Your history, dictionary, settings, speech models and the recordings behind your history are stored in `~/Library/Application Support/dev.abdallah.quietkey/` and your Groq key in the macOS Keychain. A recording is deleted together with its history entry, and none are kept when history is switched off. With a local model, nothing leaves your Mac. With Groq, each recording is sent to Groq to be transcribed. AI cleanup, if you turn it on, sends text only.
 
 ## FAQ
 
@@ -91,6 +95,9 @@ The mic stays open for 20 seconds so your next dictation starts instantly. Nothi
 **Which permissions does it need, and why?**
 Input Monitoring to notice your shortcut, Accessibility to type into other apps, and the Microphone. Quietkey never takes screenshots.
 
+**How much disk space do the recordings take?**
+About 2 MB per minute of speech, only the part where you talk. Delete history in Settings → Privacy, or set it to delete after 24 hours.
+
 **Does it work in every app?**
 Anywhere you can paste text: Mail, Slack, Notes, browsers, Terminal, VS Code, Word.
 
@@ -106,7 +113,7 @@ Release: `scripts/release.sh` builds the signed universal `dist/Quietkey.dmg` (n
 
 Tests: `cd src-tauri && cargo test --lib`, `npx playwright test`, and `scripts/e2e/suite.sh` drives the real app end to end.
 
-How it fits together: `hotkey.rs` listens for the key with a Core Graphics event tap, `audio.rs` records with cpal, `stt.rs` runs Parakeet and Whisper through transcribe.cpp (Metal), `llm.rs` talks to Groq or Ollama, `cleanup.rs` holds the offline rules, `paste.rs` pastes and restores the clipboard, `pipeline.rs` ties one dictation together.
+How it fits together: `hotkey.rs` listens for the key with a Core Graphics event tap, `audio.rs` records with cpal, `stt.rs` runs Parakeet, Whisper and Cohere Arabic through transcribe.cpp (Metal) after Silero voice detection, `llm.rs` talks to Groq or Ollama, `cleanup.rs` holds the offline rules, `paste.rs` pastes and restores the clipboard, `pipeline.rs` ties one dictation together and saves its recording. The UI is React with Tailwind; colours and sizes live in `src/styles/tokens.json`.
 
 ## Contributing
 
