@@ -71,6 +71,17 @@ pub fn apply_corrections(text: &str, fixes: &[Correction]) -> String {
 
 static FILLERS: LazyLock<Regex> =
     LazyLock::new(|| RegexBuilder::new(r"(^|[\s,])(?:um+|uh+|erm+|uhm+|hmm+|ah+)\b[,.]?").case_insensitive(true).build().unwrap());
+// "um" and "ah" are German words ("um 3 Uhr"), so German text gets the German fillers instead.
+static FILLERS_DE: LazyLock<Regex> =
+    LazyLock::new(|| RegexBuilder::new(r"(^|[\s,])(?:äh+m*|öh+m*|hmm+)(?:\b|$)[,.]?").case_insensitive(true).build().unwrap());
+static GERMAN_WORDS: LazyLock<Regex> = LazyLock::new(|| {
+    RegexBuilder::new(r"\b(?:und|ist|das|der|die|nicht|ich|wir|sie|mit|für|auf|zu|ein|eine|morgen|bitte|uhr)\b").case_insensitive(true).build().unwrap()
+});
+
+/// Parakeet does not report the language, so it is read from the text: an umlaut or ß, or two common German words.
+fn looks_german(text: &str) -> bool {
+    text.contains(['ä', 'ö', 'ü', 'ß', 'Ä', 'Ö', 'Ü']) || GERMAN_WORDS.find_iter(text).nth(1).is_some()
+}
 // "<number, time or day>, actually <same kind>" -> keep the second. Only like-for-like swaps, so a stray
 // "actually" in normal speech is never treated as a correction.
 const CUE: &str = r"(?:actually|no wait|wait no|no|sorry|i mean),?";
@@ -98,7 +109,8 @@ static SPACE_PUNCT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t]+([,.!?
 
 /// Free, offline cleanup. Conservative on purpose: when unsure, leave the words alone.
 pub fn local_cleanup(text: &str) -> String {
-    let mut s = FILLERS.replace_all(text, "$1").into_owned();
+    let fillers = if looks_german(text) { &FILLERS_DE } else { &FILLERS };
+    let mut s = fillers.replace_all(text, "$1").into_owned();
     s = collapse_repeats(&s);
     s = BACKTRACK_NUM.replace_all(&s, "$2").into_owned();
     s = BACKTRACK_DAY.replace_all(&s, "$2").into_owned();
@@ -214,6 +226,9 @@ mod tests {
     #[test]
     fn fillers_repeats_and_backtrack() {
         assert_eq!(local_cleanup("um so I think uh we should go"), "So I think we should go");
+        // B08: "um" is a German word ("um 3 Uhr", "um zu"); German fillers are "äh" and "ähm"
+        assert_eq!(local_cleanup("Das Treffen ist morgen um 3 Uhr."), "Das Treffen ist morgen um 3 Uhr.");
+        assert_eq!(local_cleanup("Ich komme, äh, um zu helfen."), "Ich komme, um zu helfen.");
         assert_eq!(local_cleanup("Let's meet at 5, actually 6 p.m. tomorrow."), "Let's meet at 6 p.m. tomorrow.");
         // Whisper sometimes ends the sentence before the correction
         assert_eq!(local_cleanup("The meeting is at 5. Actually 6 p.m. Please come."), "The meeting is at 6 p.m. Please come.");

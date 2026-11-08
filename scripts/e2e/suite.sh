@@ -30,6 +30,13 @@ mk correction Samantha "We use react query for data fetching."
 mk long Samantha "$(for i in 1 2 3 4 5 6; do print -n "This is sentence number $i of a long dictation that checks how the app handles a full minute of speech without dropping words. "; done)"
 [[ -f $FX/silence.wav ]] || python3 -c "
 import wave; w=wave.open('$FX/silence.wav','wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b'\x00\x00'*16000*2); w.close()"
+# Fan-like noise at about -30 dBFS (loud enough for the old loudness check) and speech with 2 s of silence each side.
+[[ -f $FX/noise.wav ]] || python3 -c "
+import wave,random,struct; random.seed(7); w=wave.open('$FX/noise.wav','wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+w.writeframes(b''.join(struct.pack('<h',int(random.uniform(-0.055,0.055)*32767)) for _ in range(16000*3))); w.close()"
+[[ -f $FX/padded.wav ]] || python3 -c "
+import wave; r=wave.open('$FX/speech.wav'); a=r.readframes(r.getnframes()); z=b'\x00\x00'*32000
+w=wave.open('$FX/padded.wav','wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(z+a+z); w.close()"
 [[ -f $FX/pixel.png ]] || python3 -c "
 import base64; open('$FX/pixel.png','wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))"
 
@@ -117,6 +124,21 @@ if run F02-E4; then
   check F02-E4 "silence: nothing pasted, no row" '(( $(rows) == b )) && nothing_pasted $pc'
 fi
 
+if run F02-E14; then
+  use noise; new_doc; b=$(rows); pc=$(pastes)
+  hold 1.5; sleep 4
+  check F02-E14 "steady background noise: nothing pasted, no row (VAD)" '(( $(rows) == b )) && nothing_pasted $pc'
+fi
+
+if run F02-E15; then
+  use padded; new_doc; b=$(rows)
+  hold 1.5; wait_rows $((b+1))
+  d=$(doc)
+  check F02-E15a "2 s silence each side: first and last words kept" '[[ "$d" == *meeting* && "$d" == *(Thanks|thanks)* ]]'
+  [[ -n "${QUIETKEY_LOG:-}" ]] && check F02-E15b "VAD trimmed the silence (kept under 9 s of 10.5 s)" \
+    'grep "\[timing\] vad" "$QUIETKEY_LOG" | tail -1 | grep -qE "kept [0-8]\.[0-9]s of 10\.[0-9]s"'
+fi
+
 if run F02-E5; then
   use short; new_doc; b=$(rows)
   hold 1; wait_rows $((b+1))
@@ -137,6 +159,7 @@ if run F02-E7; then
   hold 1.5; wait_rows $((b+1))
   d=$(doc)
   check F02-E7 "German with language set to de keeps umlauts" '[[ "$d" == *Grüße* || "$d" == *München* ]]'
+  check F02-E7b "German keeps the word um (not a filler)" '[[ "$(doc)" == *"um "(3|drei)* ]]'
   reset_settings
 fi
 
