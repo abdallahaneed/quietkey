@@ -250,6 +250,40 @@ fn post_cmd_v() -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Chars `typed` and `new` share at the start.
+pub fn shared_prefix(typed: &str, new: &str) -> usize {
+    typed.chars().zip(new.chars()).take_while(|(a, b)| a == b).count()
+}
+
+/// Turns `typed` (already in the focused field) into `new`: backspaces the part that differs, types the rest.
+/// Flags are set to none so the fn key the user is still holding does not turn Backspace into Forward Delete.
+/// shortcut: one Backspace per char, wrong for emoji made of several chars; count graphemes if that shows up.
+pub fn retype(typed: &str, new: &str) {
+    let Ok(src) = CGEventSource::new(CGEventSourceStateID::Private) else { return };
+    let keep = shared_prefix(typed, new);
+    let post = |ev: CGEvent| {
+        ev.set_flags(CGEventFlags::CGEventFlagNull);
+        ev.set_integer_value_field(core_graphics::event::EventField::EVENT_SOURCE_USER_DATA, crate::hotkey::SYNTHETIC_TAG);
+        ev.post(CGEventTapLocation::HID);
+    };
+    for _ in keep..typed.chars().count() {
+        for down in [true, false] {
+            if let Ok(ev) = CGEvent::new_keyboard_event(src.clone(), 51, down) { post(ev) } // 51 = kVK_Delete
+        }
+    }
+    let rest: Vec<char> = new.chars().skip(keep).collect();
+    for chunk in rest.chunks(16) {
+        // macOS reads at most 20 UTF-16 units per event
+        let s: String = chunk.iter().collect();
+        for down in [true, false] {
+            if let Ok(ev) = CGEvent::new_keyboard_event(src.clone(), 0, down) {
+                ev.set_string(&s);
+                post(ev);
+            }
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum PasteResult {
     Pasted,
@@ -292,6 +326,13 @@ pub fn paste_text(text: &str) -> PasteResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_prefix_counts_chars() {
+        assert_eq!(shared_prefix("Hallo Welt", "Hallo Wald"), 7);
+        assert_eq!(shared_prefix("", "abc"), 0);
+        assert_eq!(shared_prefix("مرحبا", "مرحبا بك"), 5);
+    }
 
     #[test]
     fn finds_v_on_other_layouts() {

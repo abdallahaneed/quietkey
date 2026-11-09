@@ -33,6 +33,8 @@ That's it. No account, no subscription, no word limit.
 
 - **Free, for real.** No trial, no weekly word cap, no paid tier. MIT licence.
 - **Private by default.** Run the speech model on your Mac and nothing is uploaded. Or use your own Groq key: audio goes to Groq and nowhere else. There is no Quietkey server.
+- **See your words while you talk.** With a model on your Mac, the text appears in the text field as you speak and fixes itself as the model hears more. When you let go, the cleaned-up text replaces it. Press `esc` and the live text is removed.
+- **Your languages only.** Quietkey keeps to the languages you picked: German with Arabic names stays in Latin letters, and sure Arabic goes to the Arabic model.
 - **Your first words are kept.** The microphone stays ready for 20 seconds after a dictation, so the next one starts the instant you press the key.
 - **Names come out right.** Select a misheard word in your history and choose **Add to dictionary**. Quietkey spells it your way from then on.
 - **Fast on any Mac.** Parakeet v3 is the default: a 40 second dictation is text in about 1.5 seconds, a short one in under 0.2 s. It covers English, German and 23 more European languages and uses about 230 MB of memory.

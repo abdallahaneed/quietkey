@@ -265,6 +265,28 @@ impl Recording {
     }
 }
 
+/// A read-only view of a running recording, for the live preview.
+pub struct Tap(Arc<Stream>);
+
+impl Recording {
+    pub fn tap(&self) -> Tap {
+        Tap(self.stream.clone())
+    }
+}
+
+impl Tap {
+    /// The last `secs` seconds at 16 kHz, or None once the recording has stopped.
+    pub fn last(&self, secs: u32) -> Option<Vec<f32>> {
+        let sh = &self.0.shared;
+        if sh.on_level.lock().unwrap().is_none() {
+            return None;
+        }
+        let s = sh.samples.lock().unwrap();
+        let tail = &s[s.len().saturating_sub((secs * self.0.rate) as usize)..];
+        Some(resample(tail, self.0.rate, WHISPER_RATE))
+    }
+}
+
 fn push_mono(data: impl Iterator<Item = f32>, channels: usize, sh: &Shared) {
     let level = sh.on_level.lock().unwrap();
     let Some(on_level) = level.as_ref() else { return }; // idle warm stream: drop the audio
