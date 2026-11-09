@@ -51,7 +51,8 @@ reset_settings() { setting "cleanup_level='light', llm_provider='none', storage_
 new_doc() { pkill -x QuietkeyTestTarget 2>/dev/null; sleep 0.3; ./QuietkeyTestTarget "$OUT" & sleep 1.5; }
 close_docs() { pkill -x QuietkeyTestTarget 2>/dev/null; rm -f "$OUT"; }
 # The suite changes settings per case; the user's own row is saved here and put back on any exit.
-q "drop table if exists e2e_settings_backup; create table e2e_settings_backup as select * from settings"
+# if not exists: a run that was killed left its backup, which still holds the real settings
+q "create table if not exists e2e_settings_backup as select * from settings"
 restore_settings() { q "replace into settings select * from e2e_settings_backup; drop table e2e_settings_backup"; }
 trap 'close_docs; restore_settings' EXIT
 doc() { cat "$OUT" 2>/dev/null; }

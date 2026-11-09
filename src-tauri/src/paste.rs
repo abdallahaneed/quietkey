@@ -251,34 +251,47 @@ fn post_cmd_v() -> Result<(), &'static str> {
 }
 
 /// Chars `typed` and `new` share at the start.
-pub fn shared_prefix(typed: &str, new: &str) -> usize {
+fn shared_prefix(typed: &str, new: &str) -> usize {
     typed.chars().zip(new.chars()).take_while(|(a, b)| a == b).count()
 }
 
 /// Turns `typed` (already in the focused field) into `new`: backspaces the part that differs, types the rest.
-/// Flags are set to none so the fn key the user is still holding does not turn Backspace into Forward Delete.
+/// Posted at the session level, after the HID layer: there the fn key the user is still holding cannot turn
+/// Backspace into Forward Delete (that rewrite also dropped our tag, so the fn listener took it for fn+Delete and
+/// cancelled the dictation), and the fn listener, a HID tap, does not see these keys at all.
 /// shortcut: one Backspace per char, wrong for emoji made of several chars; count graphemes if that shows up.
 pub fn retype(typed: &str, new: &str) {
     let Ok(src) = CGEventSource::new(CGEventSourceStateID::Private) else { return };
     let keep = shared_prefix(typed, new);
-    let post = |ev: CGEvent| {
-        ev.set_flags(CGEventFlags::CGEventFlagNull);
+    let post = |ev: CGEvent, flags: CGEventFlags| {
+        ev.set_flags(flags);
         ev.set_integer_value_field(core_graphics::event::EventField::EVENT_SOURCE_USER_DATA, crate::hotkey::SYNTHETIC_TAG);
-        ev.post(CGEventTapLocation::HID);
+        ev.post(CGEventTapLocation::Session);
     };
     for _ in keep..typed.chars().count() {
         for down in [true, false] {
-            if let Ok(ev) = CGEvent::new_keyboard_event(src.clone(), 51, down) { post(ev) } // 51 = kVK_Delete
+            if let Ok(ev) = CGEvent::new_keyboard_event(src.clone(), 51, down) { post(ev, CGEventFlags::CGEventFlagNull) } // 51 = kVK_Delete
         }
     }
-    let rest: Vec<char> = new.chars().skip(keep).collect();
-    for chunk in rest.chunks(16) {
-        // macOS reads at most 20 UTF-16 units per event
-        let s: String = chunk.iter().collect();
-        for down in [true, false] {
-            if let Ok(ev) = CGEvent::new_keyboard_event(src.clone(), 0, down) {
-                ev.set_string(&s);
-                post(ev);
+    let rest: String = new.chars().skip(keep).collect();
+    for (i, line) in rest.split('\n').enumerate() {
+        if i > 0 {
+            // Shift+Return: a line break, where a plain Return would send the message in Slack or a chat box
+            for down in [true, false] {
+                if let Ok(ev) = CGEvent::new_keyboard_event(src.clone(), 36, down) {
+                    post(ev, CGEventFlags::CGEventFlagShift);
+                }
+            }
+        }
+        let chars: Vec<char> = line.chars().collect();
+        for chunk in chars.chunks(16) {
+            // macOS reads at most 20 UTF-16 units per event
+            let s: String = chunk.iter().collect();
+            for down in [true, false] {
+                if let Ok(ev) = CGEvent::new_keyboard_event(src.clone(), 0, down) {
+                    ev.set_string(&s);
+                    post(ev, CGEventFlags::CGEventFlagNull);
+                }
             }
         }
     }

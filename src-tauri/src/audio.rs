@@ -236,6 +236,27 @@ fn from_wav(path: &str, on_level: impl Fn(f32) + Send + 'static) -> anyhow::Resu
     let mono: Vec<f32> = data.chunks(ch.max(1)).map(|f| f.iter().sum::<f32>() / f.len() as f32).collect();
     on_level(0.1);
     let (stop_tx, _) = mpsc::channel::<()>();
+    // QUIETKEY_TEST_LIVE: play the file in at real speed like a microphone, so the live preview runs too.
+    if std::env::var_os("QUIETKEY_TEST_LIVE").is_some() {
+        let shared = Arc::new(Shared {
+            samples: Mutex::new(Vec::new()),
+            on_level: Mutex::new(Some(Box::new(on_level))),
+            idle_since: Mutex::new(None),
+            dead: AtomicBool::new(false),
+        });
+        let (sh, step) = (shared.clone(), spec.sample_rate as usize / 10);
+        std::thread::spawn(move || {
+            for chunk in mono.chunks(step) {
+                std::thread::sleep(Duration::from_millis(100));
+                if sh.on_level.lock().unwrap().is_none() {
+                    return; // released
+                }
+                sh.samples.lock().unwrap().extend_from_slice(chunk);
+            }
+        });
+        let stream = Arc::new(Stream { mic: None, rate: spec.sample_rate, used_fallback: false, shared, stop_tx });
+        return Ok(Recording { stream, used_fallback: false });
+    }
     let shared = Arc::new(Shared {
         samples: Mutex::new(mono),
         on_level: Mutex::new(None),

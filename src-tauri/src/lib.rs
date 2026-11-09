@@ -433,6 +433,9 @@ fn make_panel(bar: &tauri::WebviewWindow) {
         let _: () = msg_send![win, setStyleMask: mask | (1 << 7)]; // NSWindowStyleMaskNonactivatingPanel
         let _: () = msg_send![win, setBecomesKeyOnlyIfNeeded: true];
         let _: () = msg_send![win, setFloatingPanel: true];
+        // canJoinAllSpaces | fullScreenAuxiliary: also show over an app in full screen (Safari, a video call)
+        let cb: usize = msg_send![win, collectionBehavior];
+        let _: () = msg_send![win, setCollectionBehavior: cb | 1 | (1 << 8)];
         #[cfg(debug_assertions)]
         {
             let cls: &AnyClass = msg_send![win, class];
@@ -448,6 +451,8 @@ fn load_model(path: &std::path::Path) -> anyhow::Result<()> {
     let _ = s.transcribe(&vec![0.0; 16_000], Some("en"), "");
     *pipeline::STT.lock().unwrap() = Some(s); // waits for a transcription in progress
     pipeline::READY.store(true, Ordering::SeqCst);
+    #[cfg(debug_assertions)]
+    eprintln!("[model] ready {}", path.display()); // scripts/e2e/live.sh waits for this
     Ok(())
 }
 

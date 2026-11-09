@@ -10,7 +10,7 @@ use crate::stt::{self as sttmod, LangId, Stt, Vad};
 use crate::{cleanup, llm, store};
 use rusqlite::Connection;
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -62,6 +62,8 @@ struct Job {
     refocus: bool,
     /// What the live preview already typed into the field; the paste only fixes and adds the rest.
     typed: String,
+    /// The app the live text went into: the one in front when recording started.
+    typed_pid: Option<i32>,
 }
 
 /// The loaded model. Settings swaps it when the user picks another one; the worker holds the lock while it transcribes.
@@ -219,6 +221,7 @@ impl Machine {
                     match self.cancelled.take() {
                         Some((job, at)) if at.elapsed() <= UNDO_FOR => {
                             emit(&self.app, "processing", None);
+                            PENDING.fetch_add(1, Ordering::SeqCst);
                             if self.jobs.send(job).is_err() {
                                 emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Quietkey".into()));
                             }
@@ -271,7 +274,7 @@ impl Machine {
                     let (samples, duration_ms) = a.rec.stop();
                     // Undo is always a bar click
                     drop_typed();
-                    self.cancelled = Some((Job { samples, duration_ms, front, refocus: true, typed: String::new() }, Instant::now()));
+                    self.cancelled = Some((Job { samples, duration_ms, front, refocus: true, typed: String::new(), typed_pid: None }, Instant::now()));
                     emit(&self.app, "cancelled", None);
                     None
                 }
@@ -316,16 +319,14 @@ impl Machine {
                 let note = rec.used_fallback.then(|| "Chosen microphone not found, using the default".to_string());
                 emit(&self.app, state, note);
                 let front = paste::frontmost_app();
-                let can_type = paste::accessibility_trusted()
-                    && front.pid != Some(std::process::id() as i32)
-                    && paste::focused_accepts_text(front.pid) != Some(false);
+                let can_type = paste::accessibility_trusted() && front.pid.is_some() && front.pid != Some(std::process::id() as i32);
                 let conn = self.db.lock().unwrap();
                 if can_type && !store::uses_groq(&conn) {
                     // The user's languages, so Whisper and Cohere write the right one live too.
                     let langs = store::pipeline_settings(&conn)
                         .map(|c| if c.candidates.is_empty() { c.language.into_iter().collect() } else { c.candidates })
                         .unwrap_or_default();
-                    preview(rec.tap(), langs);
+                    preview(rec.tap(), langs, front.pid);
                 }
                 drop(conn);
                 Some(Active { rec, front, started: Instant::now(), mode, warned: false })
@@ -344,12 +345,14 @@ impl Machine {
 
     /// Stops the recording and hands it to the worker. Returns at once, so the next press records right away.
     fn finish(&self, a: Active, refocus: bool) {
+        let typed_pid = a.front.pid;
         let front = target(a.front); // capture before anything can change focus
         emit(&self.app, "processing", None);
         let (samples, duration_ms) = a.rec.stop();
         cue(&self.db, "Pop"); // after stop, so the cue is not in the recording
         let typed = take_typed();
-        if self.jobs.send(Job { samples, duration_ms, front, refocus, typed }).is_err() {
+        PENDING.fetch_add(1, Ordering::SeqCst);
+        if self.jobs.send(Job { samples, duration_ms, front, refocus, typed, typed_pid }).is_err() {
             emit(&self.app, "error", Some("Dictation stopped working. Quit and reopen Quietkey".into()));
         }
     }
@@ -360,6 +363,9 @@ static PREVIEW_GEN: AtomicU64 = AtomicU64::new(0);
 /// The text the live preview has typed into the field for the running recording. Held while typing, so taking it
 /// waits for a keystroke burst to finish.
 static TYPED: Mutex<String> = Mutex::new(String::new());
+/// Dictations sent to the worker and not yet pasted. The preview waits while one is: its keys would land in the
+/// middle of the earlier dictation's text being fixed up.
+static PENDING: AtomicUsize = AtomicUsize::new(0);
 
 /// Stops the preview and hands over what it typed.
 fn take_typed() -> String {
@@ -375,12 +381,17 @@ fn drop_typed() {
 /// Live text while speaking, typed straight into the focused field: the main model reads the whole recording so far
 /// again and again, and each pass backspaces the words that changed and types the new ones. Every local model: slow
 /// ones (Whisper Turbo, Cohere) just update less often, since the pause between passes is twice the pass time. After release the cleaned-up text from the full recording replaces whatever still differs.
+/// Types only while `pid`, the app in front at the start, is still in front; in any other app it waits.
 /// shortcut: a pass reads the whole recording, so passes slow down on long dictations; read a window plus
 /// committed text if that gets noticeable.
-fn preview(tap: audio::Tap, langs: Vec<String>) {
+fn preview(tap: audio::Tap, langs: Vec<String>, pid: Option<i32>) {
     let me = PREVIEW_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     TYPED.lock().unwrap().clear();
     std::thread::spawn(move || {
+        // Here, not on the key thread: slow accessibility (Chrome, Electron) must not delay the next key press.
+        if paste::focused_accepts_text(pid) == Some(false) {
+            return;
+        }
         let mut wait = Duration::from_millis(400);
         loop {
             std::thread::sleep(wait);
@@ -388,7 +399,8 @@ fn preview(tap: audio::Tap, langs: Vec<String>) {
                 return;
             }
             let Some(s) = tap.last(STOP_AT.as_secs() as u32) else { return };
-            if s.len() < 8_000 || !audio::has_speech(&s) {
+            // The voice detector, as for the final text: Whisper makes words up from room noise.
+            if s.len() < 8_000 || PENDING.load(Ordering::SeqCst) > 0 || paste::frontmost_app().pid != pid || speech(&s).is_none() {
                 continue;
             }
             // try_lock: the worker transcribing a finished dictation always goes first.
@@ -402,6 +414,9 @@ fn preview(tap: audio::Tap, langs: Vec<String>) {
             let mut typed = TYPED.lock().unwrap();
             if PREVIEW_GEN.load(Ordering::SeqCst) != me {
                 return; // released while transcribing: the final text takes over
+            }
+            if PENDING.load(Ordering::SeqCst) > 0 || paste::frontmost_app().pid != pid {
+                continue; // an earlier dictation is being pasted, or the user switched apps while the model ran
             }
             paste::retype(&typed, &text);
             *typed = text;
@@ -451,22 +466,30 @@ impl Worker {
     fn run(mut self, jobs: Receiver<Job>) {
         for job in jobs {
             self.handle(job);
+            PENDING.fetch_sub(1, Ordering::SeqCst);
         }
     }
 
     fn handle(&mut self, job: Job) {
-        let Job { samples, duration_ms, front, refocus, typed } = job;
+        let Job { samples, duration_ms, front, refocus, typed, typed_pid } = job;
+        // Live text is only fixed up in the app it was typed into. In another app nothing is deleted: the full text
+        // is pasted there and the live text stays where it was.
+        let typed = if front.pid == typed_pid { typed } else { String::new() };
+        let unheard = |app: &AppHandle| {
+            paste::retype(&typed, ""); // live text from noise the voice detector rejected at the end
+            emit(app, "error", Some("Didn't hear anything".into()));
+        };
         #[cfg(debug_assertions)]
         let tv = Instant::now();
         let Some(span) = speech(&samples) else {
-            emit(&self.app, "error", Some("Didn't hear anything".into()));
+            unheard(&self.app);
             return;
         };
         #[cfg(debug_assertions)]
         eprintln!("[timing] vad {:?}, kept {:.1}s of {:.1}s", tv.elapsed(), span.len() as f32 / 16_000.0, samples.len() as f32 / 16_000.0);
         let speech = &samples[span];
         match process(&self.db, speech, front.bundle_id.as_deref()) {
-            Ok(out) if out.final_text.is_empty() => emit(&self.app, "error", Some("Didn't hear anything".into())),
+            Ok(out) if out.final_text.is_empty() => unheard(&self.app),
             Ok(out) => {
                 // Only refuse when macOS clearly reports a focused element that cannot take text (e.g. Finder).
                 let accepts = paste::focused_accepts_text(front.pid);
@@ -481,12 +504,12 @@ impl Worker {
                     paste::give_focus(front.pid);
                 }
                 let tp = Instant::now();
-                // Keep what the preview typed up to the first difference, delete the rest, paste the remainder.
-                let keep = paste::shared_prefix(&typed, &out.final_text);
-                let head: String = out.final_text.chars().take(keep).collect();
-                paste::retype(&typed, &head);
-                let rest = &out.final_text[head.len()..];
-                let pasted = if rest.is_empty() { PasteResult::Pasted } else { paste::paste_text(rest) };
+                // Live text in the field: fix it by typing, in the same key queue as its Backspaces. A ⌘V after hundreds of
+                // Backspaces reached the app after the clipboard was restored and pasted the user's old clipboard.
+                let pasted = if typed.is_empty() { paste::paste_text(&out.final_text) } else {
+                    paste::retype(&typed, &out.final_text);
+                    PasteResult::Pasted
+                };
                 #[cfg(debug_assertions)]
                 eprintln!("[timing] paste+restore {:?} into {:?}", tp.elapsed(), front.name);
                 let (status, err, msg): (&str, Option<&str>, Option<String>) = match pasted {
