@@ -8,6 +8,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0003_stt_engine.sql"),
     include_str!("../migrations/0004_parakeet.sql"),
     include_str!("../migrations/0005_history_cards.sql"),
+    include_str!("../migrations/0006_live_text.sql"),
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -206,6 +207,7 @@ mod tests {
         assert_eq!(crate::store::model_choice(&c).as_deref(), Some("parakeet-v3"));
         crate::store::set_model(&c, "cohere-ar").unwrap(); // 0005
         assert_eq!(crate::store::model_choice(&c).as_deref(), Some("cohere-ar"));
+        assert_eq!(crate::store::live_text(&c), (true, false)); // 0006: live text on, no 30 s limit
     }
 
     #[test]

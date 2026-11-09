@@ -41,6 +41,20 @@ test.describe("Settings", () => {
     expect(await lastPatch(page)).toEqual({ sounds: false });
   });
 
+  test("live text switches: on by default, 30 s limit only while live text is on", async ({ page }) => {
+    await open(page, "settings");
+    const live = page.getByRole("switch", { name: "Show words while you talk" });
+    const limit = page.getByRole("switch", { name: "Stop live text after 30 seconds" });
+    await expect(live).toBeChecked();
+    await expect(limit).not.toBeChecked();
+    await expect(page.getByText("Each update reads everything you said so far")).toBeVisible();
+    await limit.click();
+    expect(await lastPatch(page)).toEqual({ live_text_limit: true });
+    await live.click();
+    expect(await lastPatch(page)).toEqual({ live_text: false });
+    await expect(limit).toBeDisabled();
+  });
+
   test("pick a microphone", async ({ page }) => {
     await open(page, "settings");
     await page.getByRole("combobox", { name: "Microphone" }).click();

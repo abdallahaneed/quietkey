@@ -33,7 +33,7 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
       shortcuts: { push_to_talk: [["Fn"]] }, mic_id: null, languages: ["en"], auto_detect_language: false, theme: "system",
       launch_at_login: true, show_bar: true, storage_mode: "store", cleanup_level: "light", llm_provider: "none",
       groq_model: "llama-3.3-70b-versatile", ollama_model: "llama3.2:3b", ollama_url: "http://127.0.0.1:11434",
-      sounds: true, onboarding_done: false, stt_engine: "local", ...(s.settings ?? {}),
+      sounds: true, live_text: true, live_text_limit: false, onboarding_done: false, stt_engine: "local", ...(s.settings ?? {}),
     };
     let groqKey = s.groqKeySaved ?? false;
     const models = [

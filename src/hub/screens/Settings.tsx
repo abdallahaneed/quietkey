@@ -177,6 +177,21 @@ export function Settings({ nav }: { nav: Nav }) {
         <div className="p-4"><SpeechEngine settings={s} onSaved={setS} picker={false} /></div>
       </Group>
 
+      <Group id="live" title="Live text" description={s.stt_engine === "groq"
+        ? "Live text needs a speech model on this Mac. With Groq the text appears when you let go."
+        : "Your words appear in the text field while you talk. When you let go, the cleaned-up text replaces them."}>
+        <Row label="Show words while you talk" info="On: Quietkey types what it hears into the text field as you speak and corrects words as it hears more. Off: nothing appears until you let go, then the whole text is pasted at once. Esc removes live text, and it only goes into the app you started in.">
+          <Toggle label="Show words while you talk" checked={s.live_text} disabled={s.stt_engine === "groq"} onChange={(v) => update({ live_text: v })} />
+        </Row>
+        <Row label="Stop live text after 30 seconds" info="For long dictations. Nothing you say is lost either way: Quietkey keeps recording, only the live words stop updating."
+          below={<div className="mt-1 space-y-1 text-sm text-muted">
+            <p>Off: the words keep updating for the whole dictation. Each update reads everything you said so far, so a long dictation keeps your Mac busier and the final text can take a few seconds longer after you let go. You notice it most with Whisper Small and Large v3 Turbo, hardly with Parakeet.</p>
+            <p>On: after 30 seconds the live words stop, the rest appears when you let go. Long dictations finish sooner and use less battery.</p>
+          </div>}>
+          <Toggle label="Stop live text after 30 seconds" checked={s.live_text_limit} disabled={!s.live_text || s.stt_engine === "groq"} onChange={(v) => update({ live_text_limit: v })} />
+        </Row>
+      </Group>
+
       <Group id="cleanup" title="Cleanup" description="What happens to the text between speaking and pasting.">
         <Row label="Cleanup level" info="Off pastes exactly what was heard. Light removes “um” and repeated words and keeps only the corrected part when you correct yourself. Polish also smooths the wording, which needs AI cleanup; without it Polish works like Light."
           onReset={() => update({ cleanup_level: "light" })} isDefault={s.cleanup_level === "light"}>

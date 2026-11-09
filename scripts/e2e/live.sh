@@ -108,5 +108,29 @@ if run L6; then
   check L6b "field empty after release" '[[ -z "$d" ]]'
 fi
 
+# L7 live text switched off in Settings: nothing while talking, the whole text pasted at release
+if run L7; then
+  q "update settings set live_text=0 where id = 1"
+  use speech; new_doc; b=$(rows); len=$(secs speech)
+  $K fn-down; sleep $((len + 1)); mid=$(doc); release_fn
+  wait_rows $((b+1)); d=$(doc); f=$(last final_text)
+  print "      while held: ${mid}\n      doc: ${d}"
+  check L7a "live text off: nothing typed while talking" '[[ -z "$mid" ]]'
+  check L7b "live text off: full text pasted at release" '[[ "$d" == "$f" && -n "$f" ]]'
+  q "update settings set live_text=1 where id = 1"
+fi
+
+# L8 "stop live text after 30 seconds": the live words stop growing after 30 s, the final text is still complete
+if run L8; then
+  q "update settings set live_text_limit=1 where id = 1"
+  use long; new_doc; b=$(rows); len=$(secs long)
+  $K fn-down; sleep 33; at33=$(doc); sleep $((len - 33 + 1)); end=$(doc); t0=$EPOCHREALTIME; release_fn
+  wait_rows $((b+1)) 90; dt=$(( EPOCHREALTIME - t0 )); d=$(doc); f=$(last final_text)
+  print "      live chars at 33 s: ${#at33}, at release: ${#end}, final: ${#f}, release->row ~${dt} s"
+  check L8a "live text stopped growing after 30 s" '[[ -n "$at33" && "$end" == "$at33" ]]'
+  check L8b "final text complete and exact" '[[ "$d" == "$f" && ${#f} -gt ${#end} ]]'
+  q "update settings set live_text_limit=0 where id = 1"
+fi
+
 print "\n$MODEL: $PASS passed, $FAIL failed, $DISTURBED disturbed"
 exit $(( FAIL > 0 ))

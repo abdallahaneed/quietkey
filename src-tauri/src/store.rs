@@ -27,7 +27,7 @@ pub fn friendly(e: rusqlite::Error, what: &str) -> String {
 
 const BOOL_COLS: &[&str] = &[
     "auto_detect_language", "launch_at_login", "show_bar", "show_in_dock", "mute_audio", "sounds",
-    "press_enter_enabled", "command_mode_enabled", "onboarding_done",
+    "press_enter_enabled", "command_mode_enabled", "onboarding_done", "live_text", "live_text_limit",
 ];
 const TEXT_COLS: &[&str] = &[
     "mic_id", "theme", "bar_edge", "storage_mode", "cleanup_level", "llm_provider", "groq_model", "ollama_model", "ollama_url", "stt_engine",
@@ -173,6 +173,11 @@ pub fn set_model(conn: &Connection, id: &str) -> rusqlite::Result<()> {
 /// True when speech goes to Groq instead of the local model.
 pub fn uses_groq(conn: &Connection) -> bool {
     conn.query_row("select stt_engine from settings where id = 1", [], |r| r.get::<_, String>(0)).is_ok_and(|e| e == "groq")
+}
+
+/// Live text while talking (Settings, Live text): (on, stop after 30 seconds).
+pub fn live_text(conn: &Connection) -> (bool, bool) {
+    conn.query_row("select live_text, live_text_limit from settings where id = 1", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap_or((true, false))
 }
 
 /// Start and stop sounds on (Settings, Sound).

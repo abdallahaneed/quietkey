@@ -321,12 +321,13 @@ impl Machine {
                 let front = paste::frontmost_app();
                 let can_type = paste::accessibility_trusted() && front.pid.is_some() && front.pid != Some(std::process::id() as i32);
                 let conn = self.db.lock().unwrap();
-                if can_type && !store::uses_groq(&conn) {
+                let (live, limit) = store::live_text(&conn);
+                if live && can_type && !store::uses_groq(&conn) {
                     // The user's languages, so Whisper and Cohere write the right one live too.
                     let langs = store::pipeline_settings(&conn)
                         .map(|c| if c.candidates.is_empty() { c.language.into_iter().collect() } else { c.candidates })
                         .unwrap_or_default();
-                    preview(rec.tap(), langs, front.pid);
+                    preview(rec.tap(), langs, front.pid, limit);
                 }
                 drop(conn);
                 Some(Active { rec, front, started: Instant::now(), mode, warned: false })
@@ -366,6 +367,8 @@ static TYPED: Mutex<String> = Mutex::new(String::new());
 /// Dictations sent to the worker and not yet pasted. The preview waits while one is: its keys would land in the
 /// middle of the earlier dictation's text being fixed up.
 static PENDING: AtomicUsize = AtomicUsize::new(0);
+/// "Stop live text after 30 seconds" (Settings).
+const LIVE_LIMIT_SECS: usize = 30;
 
 /// Stops the preview and hands over what it typed.
 fn take_typed() -> String {
@@ -382,9 +385,11 @@ fn drop_typed() {
 /// again and again, and each pass backspaces the words that changed and types the new ones. Every local model: slow
 /// ones (Whisper Turbo, Cohere) just update less often, since the pause between passes is twice the pass time. After release the cleaned-up text from the full recording replaces whatever still differs.
 /// Types only while `pid`, the app in front at the start, is still in front; in any other app it waits.
+/// `limit`: stop after LIVE_LIMIT_SECS of recording (Settings). The text so far stays and the final text fixes it up,
+/// so a long dictation never waits for a live pass over minutes of audio.
 /// shortcut: a pass reads the whole recording, so passes slow down on long dictations; read a window plus
 /// committed text if that gets noticeable.
-fn preview(tap: audio::Tap, langs: Vec<String>, pid: Option<i32>) {
+fn preview(tap: audio::Tap, langs: Vec<String>, pid: Option<i32>, limit: bool) {
     let me = PREVIEW_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     TYPED.lock().unwrap().clear();
     std::thread::spawn(move || {
@@ -399,6 +404,9 @@ fn preview(tap: audio::Tap, langs: Vec<String>, pid: Option<i32>) {
                 return;
             }
             let Some(s) = tap.last(STOP_AT.as_secs() as u32) else { return };
+            if limit && s.len() > LIVE_LIMIT_SECS * 16_000 {
+                return;
+            }
             // The voice detector, as for the final text: Whisper makes words up from room noise.
             if s.len() < 8_000 || PENDING.load(Ordering::SeqCst) > 0 || paste::frontmost_app().pid != pid || speech(&s).is_none() {
                 continue;

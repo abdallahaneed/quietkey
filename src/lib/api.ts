@@ -41,6 +41,8 @@ export type Settings = {
   ollama_model: string;
   ollama_url: string;
   sounds: boolean;
+  live_text: boolean;
+  live_text_limit: boolean;
   onboarding_done: boolean;
   [key: string]: unknown;
 };
