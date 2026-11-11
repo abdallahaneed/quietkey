@@ -259,14 +259,19 @@ fn shared_prefix(typed: &str, new: &str) -> usize {
 /// Posted at the session level, after the HID layer: there the fn key the user is still holding cannot turn
 /// Backspace into Forward Delete (that rewrite also dropped our tag, so the fn listener took it for fn+Delete and
 /// cancelled the dictation), and the fn listener, a HID tap, does not see these keys at all.
+/// `pid`: the app the live text is in. Its keys go straight to that app, so a switch to another app at the moment
+/// of an update cannot put live words there.
 /// shortcut: one Backspace per char, wrong for emoji made of several chars; count graphemes if that shows up.
-pub fn retype(typed: &str, new: &str) {
+pub fn retype(typed: &str, new: &str, pid: Option<i32>) {
     let Ok(src) = CGEventSource::new(CGEventSourceStateID::Private) else { return };
     let keep = shared_prefix(typed, new);
     let post = |ev: CGEvent, flags: CGEventFlags| {
         ev.set_flags(flags);
         ev.set_integer_value_field(core_graphics::event::EventField::EVENT_SOURCE_USER_DATA, crate::hotkey::SYNTHETIC_TAG);
-        ev.post(CGEventTapLocation::Session);
+        match pid {
+            Some(p) => ev.post_to_pid(p),
+            None => ev.post(CGEventTapLocation::Session),
+        }
     };
     for _ in keep..typed.chars().count() {
         for down in [true, false] {

@@ -13,7 +13,7 @@ import { Style } from "./screens/Style";
 import { Models } from "./screens/Models";
 import { Footer } from "./parts/Footer";
 import logo from "../../assets/icon.svg";
-import { api, applyTheme } from "../lib/api";
+import { api, applyTheme, events } from "../lib/api";
 
 export type Route = "home" | "models" | "dictionary" | "snippets" | "style" | "insights" | "settings" | "setup" | "design";
 export type Nav = (r: Route) => void;
@@ -41,8 +41,14 @@ const SCREENS: Record<Route, ComponentType<{ nav: Nav }>> = {
 export function Hub() {
   const [route, setRoute] = useState<Route>(() => (location.hash.slice(1) as Route) in SCREENS ? (location.hash.slice(1) as Route) : "home");
   useEffect(() => { history.replaceState(null, "", `#${route}`); }, [route]);
+  // Onboarding fills the window until it is finished, then Setup in the sidebar opens it again.
+  const [onboarded, setOnboarded] = useState<boolean | null>(null);
   // The saved theme; "system" follows macOS through the CSS media query.
-  useEffect(() => { api.settings().then((st) => applyTheme(st.theme)).catch(() => {}); }, []);
+  useEffect(() => {
+    api.settings().then((st) => { applyTheme(st.theme); setOnboarded(st.onboarding_done); }).catch(() => setOnboarded(true));
+    const un = events.onSettings((st) => setOnboarded(st.onboarding_done));
+    return () => { un.then((f) => f()); };
+  }, []);
   // Cmd+, opens Settings, like every Mac app.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.metaKey && e.key === ",") { e.preventDefault(); setRoute("settings"); } };
@@ -50,6 +56,10 @@ export function Hub() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   const Screen = SCREENS[route];
+  if (onboarded === null) return <div className="h-full bg-bg" />; // settings not read yet: no flash of Home
+  if (!onboarded || route === "setup") {
+    return <div className="h-full bg-bg"><Setup nav={(r) => { setOnboarded(true); setRoute(r === "setup" ? "home" : r); }} /></div>;
+  }
 
   const item = (r: (typeof MAIN)[number]) => (
     <a

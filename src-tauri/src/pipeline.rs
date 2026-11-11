@@ -260,7 +260,7 @@ impl Machine {
                 }
                 (Some(a), Input::Key(HotkeyEvent::FnCombo)) if a.mode == Mode::Hold => {
                     let _ = a.rec.stop(); // Fn+other key is a shortcut, not dictation
-                    drop_typed();
+                    drop_typed(a.front.pid);
                     emit(&self.app, "idle", None);
                     None
                 }
@@ -270,10 +270,11 @@ impl Machine {
                     None
                 }
                 (Some(a), Input::Key(HotkeyEvent::Escape) | Input::Cancel) => {
+                    let typed_pid = a.front.pid;
                     let front = target(a.front);
                     let (samples, duration_ms) = a.rec.stop();
                     // Undo is always a bar click
-                    drop_typed();
+                    drop_typed(typed_pid);
                     self.cancelled = Some((Job { samples, duration_ms, front, refocus: true, typed: String::new(), typed_pid: None }, Instant::now()));
                     emit(&self.app, "cancelled", None);
                     None
@@ -319,7 +320,8 @@ impl Machine {
                 let note = rec.used_fallback.then(|| "Chosen microphone not found, using the default".to_string());
                 emit(&self.app, state, note);
                 let front = paste::frontmost_app();
-                let can_type = paste::accessibility_trusted() && front.pid.is_some() && front.pid != Some(std::process::id() as i32);
+                // Quietkey's own window counts too: the practice field in Setup shows live text.
+                let can_type = paste::accessibility_trusted() && front.pid.is_some();
                 let conn = self.db.lock().unwrap();
                 let (live, limit) = store::live_text(&conn);
                 if live && can_type && !store::uses_groq(&conn) {
@@ -376,9 +378,9 @@ fn take_typed() -> String {
     std::mem::take(&mut *TYPED.lock().unwrap())
 }
 
-/// Stops the preview and deletes what it typed (cancelled recording).
-fn drop_typed() {
-    paste::retype(&take_typed(), "");
+/// Stops the preview and deletes what it typed (cancelled recording) in `pid`, the app it was typed into.
+fn drop_typed(pid: Option<i32>) {
+    paste::retype(&take_typed(), "", pid);
 }
 
 /// Live text while speaking, typed straight into the focused field: the main model reads the whole recording so far
@@ -426,7 +428,9 @@ fn preview(tap: audio::Tap, langs: Vec<String>, pid: Option<i32>, limit: bool) {
             if PENDING.load(Ordering::SeqCst) > 0 || paste::frontmost_app().pid != pid {
                 continue; // an earlier dictation is being pasted, or the user switched apps while the model ran
             }
-            paste::retype(&typed, &text);
+            paste::retype(&typed, &text, pid);
+            #[cfg(debug_assertions)]
+            eprintln!("[live] {} chars into pid {pid:?}", text.chars().count()); // scripts/e2e/live.sh counts these
             *typed = text;
         }
     });
@@ -484,7 +488,7 @@ impl Worker {
         // is pasted there and the live text stays where it was.
         let typed = if front.pid == typed_pid { typed } else { String::new() };
         let unheard = |app: &AppHandle| {
-            paste::retype(&typed, ""); // live text from noise the voice detector rejected at the end
+            paste::retype(&typed, "", typed_pid); // live text from noise the voice detector rejected at the end
             emit(app, "error", Some("Didn't hear anything".into()));
         };
         #[cfg(debug_assertions)]
@@ -515,7 +519,7 @@ impl Worker {
                 // Live text in the field: fix it by typing, in the same key queue as its Backspaces. A ⌘V after hundreds of
                 // Backspaces reached the app after the clipboard was restored and pasted the user's old clipboard.
                 let pasted = if typed.is_empty() { paste::paste_text(&out.final_text) } else {
-                    paste::retype(&typed, &out.final_text);
+                    paste::retype(&typed, &out.final_text, typed_pid);
                     PasteResult::Pasted
                 };
                 #[cfg(debug_assertions)]

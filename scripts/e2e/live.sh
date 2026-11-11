@@ -132,5 +132,23 @@ if run L8; then
   q "update settings set live_text_limit=0 where id = 1"
 fi
 
+# L9 Chrome: live text and the final text in a browser textarea (keys go straight to Chrome)
+if run L9; then
+  use speech; b=$(rows); len=$(secs speech); printf 'L9-CLIP' | pbcopy
+  pkill -x QuietkeyTestTarget 2>/dev/null
+  open -a "Google Chrome" "data:text/html,<title>quietkey-live</title><textarea autofocus style='position:fixed;inset:0;width:100vw;height:100vh'></textarea>"
+  for i in {1..20}; do [[ "$(front)" == "Google Chrome" ]] && break; sleep 0.5; done; sleep 1.5
+  $K click sleep:0.5
+  lives() { grep -c '^\[live\]' "${QUIETKEY_LOG:-/dev/null}"; }
+  l0=$(lives)
+  $K fn-down; sleep $((len + 1)); l1=$(lives); f0=$(front); $K fn-up
+  OTHER=""; [[ "$f0" == "Google Chrome" ]] || OTHER=$f0
+  wait_rows $((b+1)); $K cmd-a cmd-c sleep:0.4; d=$(pbpaste); f=$(last final_text)
+  print "      live updates sent: $((l1 - l0))\n      doc: ${d}\n      db:  ${f}"
+  check L9a "Chrome: live text while talking" '(( l1 > l0 ))'
+  check L9b "Chrome: field equals the saved text" '[[ "$d" == "$f" && -n "$f" ]]'
+  osascript -e 'tell application "Google Chrome" to close (every tab of every window whose title is "quietkey-live")' 2>/dev/null
+fi
+
 print "\n$MODEL: $PASS passed, $FAIL failed, $DISTURBED disturbed"
 exit $(( FAIL > 0 ))

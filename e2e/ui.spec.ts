@@ -110,24 +110,65 @@ test.describe("Home", () => {
       permissions: { accessibility: false, input_monitoring: false, hotkey_running: false, fn_key_conflict: false },
     });
     await page.getByRole("button", { name: "Finish setup" }).click();
-    await expect(page.getByRole("heading", { name: "Set up dictation" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Welcome to Quietkey" })).toBeVisible();
   });
 });
 
 test.describe("Setup", () => {
-  test("permissions not granted: Allow buttons and a start notice", async ({ page }) => {
-    await open(page, "setup", {
+  const fresh = { settings: { onboarding_done: false } };
+  const next = (page: import("@playwright/test").Page, name = "Continue") => page.getByRole("button", { name, exact: true }).click();
+
+  test("first start opens onboarding instead of Home, one step at a time", async ({ page }) => {
+    await open(page, "home", fresh);
+    await expect(page.getByRole("heading", { name: "Welcome to Quietkey" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Main" })).toHaveCount(0); // no sidebar during onboarding
+    await expect(page.getByRole("list", { name: "Step 1 of 7" })).toBeVisible();
+    await expectNoSeriousA11yIssues(page);
+    await next(page, "Get started");
+    await expect(page.getByRole("heading", { name: "How should speech become text?" })).toBeVisible();
+    await page.getByRole("button", { name: "Back" }).click();
+    await expect(page.getByRole("heading", { name: "Welcome to Quietkey" })).toBeVisible();
+  });
+
+  test("walk through every step and finish: onboarding is saved as done and Home opens", async ({ page }) => {
+    await open(page, "home", fresh);
+    await next(page, "Get started");
+    for (const h of ["How should speech become text?", "Allow three things", "Check your microphone", "One shortcut, every app", "Give it a try"]) {
+      await expect(page.getByRole("heading", { name: h })).toBeVisible();
+      await expectNoSeriousA11yIssues(page);
+      await next(page, h === "Give it a try" ? "Skip" : "Continue");
+    }
+    await expect(page.getByRole("heading", { name: "You're ready" })).toBeVisible();
+    await next(page, "Start dictating");
+    await expect(page.getByRole("heading", { name: "Your dictations" })).toBeVisible();
+    const patches = await page.evaluate(() => (window as any).__fake.calls.filter((c: any) => c.cmd === "settings_update").map((c: any) => c.args.patch));
+    expect(patches).toContainEqual({ onboarding_done: true });
+  });
+
+  test("speech step starts the model download while setup goes on", async ({ page }) => {
+    await open(page, "home", { ...fresh, noModels: true });
+    await next(page, "Get started");
+    const cmds = await page.evaluate(() => (window as any).__fake.calls.map((c: any) => c.cmd));
+    await expect.poll(() => page.evaluate(() => (window as any).__fake.calls.map((c: any) => c.cmd))).toContain("model_select");
+    expect(cmds).not.toContain("hotkey_start");
+  });
+
+  test("permissions not granted: Allow buttons, a start notice, and Skip for now", async ({ page }) => {
+    await open(page, "home", { ...fresh,
       permissions: { accessibility: false, input_monitoring: false, hotkey_running: false, fn_key_conflict: false, microphone: "denied" },
     });
+    await next(page, "Get started"); await next(page);
     await expect(page.getByRole("button", { name: "Allow" })).toHaveCount(3);
     await expect(page.getByRole("button", { name: "Start listening" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Skip for now" })).toBeVisible();
     await expectNoSeriousA11yIssues(page);
   });
 
   test("Allow asks macOS first, so Quietkey shows up in System Settings", async ({ page }) => {
-    await open(page, "setup", {
+    await open(page, "home", { ...fresh,
       permissions: { accessibility: false, input_monitoring: true, hotkey_running: true, fn_key_conflict: false, microphone: "undetermined" },
     });
+    await next(page, "Get started"); await next(page);
     for (const b of await page.getByRole("button", { name: "Allow" }).all()) await b.click();
     const cmds = await page.evaluate(() => (window as any).__fake.calls.map((c: any) => c.cmd));
     expect(cmds).toContain("request_accessibility");
@@ -135,20 +176,23 @@ test.describe("Setup", () => {
   });
 
   test("macOS fn conflict is explained with a way to fix it", async ({ page }) => {
-    await open(page, "setup", {
+    await open(page, "home", { ...fresh,
       permissions: { accessibility: true, input_monitoring: true, hotkey_running: true, fn_key_conflict: true, microphone: "granted" },
     });
+    await next(page, "Get started"); await next(page);
     await expect(page.getByText(/Press fn key to/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Open Keyboard settings" })).toBeVisible();
   });
 
   test("all granted: ready message", async ({ page }) => {
-    await open(page, "setup");
-    await expect(page.getByText("Ready. Hold fn in any text field and talk.")).toBeVisible();
+    await open(page, "home", fresh);
+    await next(page, "Get started"); await next(page);
+    await expect(page.getByText("All set. Quietkey can hear your shortcut and type for you.")).toBeVisible();
   });
 
-  test("step 1: pick Groq and paste a key, or stay local and see the model download", async ({ page }) => {
-    await open(page, "setup");
+  test("speech step: pick Groq and paste a key, or stay local and see the models", async ({ page }) => {
+    await open(page, "home", fresh);
+    await next(page, "Get started");
     const engine = page.getByRole("radiogroup", { name: "Speech engine" });
     await expect(engine.getByRole("radio", { name: /On this Mac/ })).toBeChecked();
     await expect(page.getByRole("radio", { name: /Large v3 Turbo/ })).toBeVisible();
@@ -160,6 +204,14 @@ test.describe("Setup", () => {
     const patches = await page.evaluate(() => (window as any).__fake.calls.filter((c: any) => c.cmd === "settings_update").map((c: any) => c.args.patch));
     expect(patches).toContainEqual({ stt_engine: "groq" });
     await expectNoSeriousA11yIssues(page);
+  });
+
+  test("Setup in the sidebar runs it again, and it can be closed", async ({ page }) => {
+    await open(page, "home");
+    await page.getByRole("link", { name: "Setup" }).click();
+    await expect(page.getByRole("heading", { name: "Welcome to Quietkey" })).toBeVisible();
+    await page.getByRole("button", { name: "Close setup" }).click();
+    await expect(page.getByRole("heading", { name: "Your dictations" })).toBeVisible();
   });
 });
 

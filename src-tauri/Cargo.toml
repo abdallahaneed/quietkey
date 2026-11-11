@@ -1,6 +1,6 @@
 [package]
 name = "quietkey"
-version = "0.2.1"
+version = "0.2.2"
 description = "Local-first voice dictation for macOS"
 authors = ["Abdallah Aneed"]
 edition = "2024"
@@ -26,7 +26,7 @@ rusqlite = { version = "0.41.1", features = ["bundled"] }
 transcribe-cpp = "0.4.0"
 uuid = { version = "1.29.0", features = ["v7"] }
 cpal = "0.18.2"
-core-graphics = "0.25.0"
+core-graphics = { version = "0.25.0", features = ["elcapitan"] } # elcapitan: CGEventPostToPid (macOS 10.11+)
 core-foundation = "0.10.1"
 objc2 = "0.6.5"
 objc2-foundation = "0.3.2"

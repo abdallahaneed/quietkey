@@ -13,6 +13,8 @@ export type FakeState = {
   groqKeySaved?: boolean;
   styles?: { category: string; tone: string }[];
   failStyles?: boolean;
+  /** A fresh install: no speech model on disk yet. */
+  noModels?: boolean;
 };
 
 export async function installFakeBackend(page: Page, state: FakeState = {}) {
@@ -33,7 +35,7 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
       shortcuts: { push_to_talk: [["Fn"]] }, mic_id: null, languages: ["en"], auto_detect_language: false, theme: "system",
       launch_at_login: true, show_bar: true, storage_mode: "store", cleanup_level: "light", llm_provider: "none",
       groq_model: "llama-3.3-70b-versatile", ollama_model: "llama3.2:3b", ollama_url: "http://127.0.0.1:11434",
-      sounds: true, live_text: true, live_text_limit: false, onboarding_done: false, stt_engine: "local", ...(s.settings ?? {}),
+      sounds: true, live_text: true, live_text_limit: false, onboarding_done: true, stt_engine: "local", ...(s.settings ?? {}),
     };
     let groqKey = s.groqKeySaved ?? false;
     const models = [
@@ -43,6 +45,7 @@ export async function installFakeBackend(page: Page, state: FakeState = {}) {
       { model: { id: "large-v3-turbo", label: "Whisper Large v3 Turbo", size_mb: 574, ram_mb: 700, note: "Most accurate", grades: [["en", "A-"], ["de", "A-"], ["ar", "C"]], speed: 2 }, downloaded: true, active: true },
       { model: { id: "cohere-ar", label: "Cohere Transcribe Arabic", size_mb: 1560, ram_mb: 1900, note: "Best for Arabic", grades: [["en", "B+"], ["de", "-"], ["ar", "A"]], speed: 1 }, downloaded: false, active: false },
     ];
+    if (s.noModels) for (const m of models) { m.downloaded = false; m.active = false; }
     const dupWord = (w: string, m: string | null, skip?: string) =>
       dict.some((d) => d.id !== skip && d.word.toLowerCase() === w.toLowerCase() && (d.misspelling ?? "").toLowerCase() === (m ?? "").toLowerCase());
     const handlers: Record<string, (args: any) => unknown> = {
